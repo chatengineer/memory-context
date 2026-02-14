@@ -3,6 +3,8 @@
  * 
  * Re-exports from src/index.ts for OpenClaw plugin discovery
  * This is the root entry point that OpenClaw looks for
+ * 
+ * Uses Factory pattern for async initialization (Critical Issue #3)
  */
 
 // Activation hook for OpenClaw plugin system
@@ -16,7 +18,7 @@ export function activate(context?: any): { dispose: () => void } {
   // Create plugin instance
   const plugin = new MemoryContextPlugin();
   
-  // Initialize
+  // Initialize asynchronously (don't block activation)
   plugin.onLoad().catch((err: any) => {
     console.error('[memory-context] Activation error:', err);
   });
@@ -55,6 +57,10 @@ export type {
   Message
 } from './src/types';
 
+// Re-export factory and config types
+export type { MemoryContextConfig } from './src/core/factory';
+export { MemoryContextFactory, createMemoryContext, memoryContextFactory } from './src/core/factory';
+
 // Lazy exports - only load when accessed
 export const MemoryContextPlugin = lazyRequire('./src/index', 'MemoryContextPlugin');
 export const JITEngine = lazyRequire('./src/core/jit-engine', 'JITEngine');
@@ -62,6 +68,7 @@ export const HierarchicalContext = lazyRequire('./src/core/hierarchical-context'
 export const ShiftImmunity = lazyRequire('./src/core/shift-immunity', 'ShiftImmunity');
 export const BudgetManager = lazyRequire('./src/core/budget-manager', 'BudgetManager');
 export const FullHistory = lazyRequire('./src/persistence/full-history', 'FullHistory');
+export const TieredStorage = lazyRequire('./src/persistence/tiered-storage', 'TieredStorage');
 
 function lazyRequire(modulePath: string, exportName: string) {
   return new Proxy(function() {}, {
