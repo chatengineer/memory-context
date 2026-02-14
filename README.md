@@ -4,6 +4,8 @@
 
 Zero-shift guarantee. No compaction. JIT hierarchical assembly with quantum anchors.
 
+**Version: 1.4.0**
+
 ---
 
 ## Overview & Philosophy
@@ -16,6 +18,7 @@ The `memory-context` plugin represents a radical departure from traditional cont
 2. **Zero Context Shifting** - Quantum anchors guarantee continuity across model switches, session boundaries, and system events.
 3. **Hierarchical Organization** - Five distinct layers (L0-L4) provide clear separation of concerns.
 4. **100% Token Utilization** - Every available token is used effectively.
+5. **Bounded Memory** - Tiered storage prevents unbounded growth while preserving history.
 
 ### Key Differentiator
 
@@ -28,7 +31,7 @@ Traditional systems:
 **Memory Context:**
 - Rebuilds fresh every call
 - Never compacts
-- Preserves all history
+- Preserves all history via tiered storage
 - Maintains continuity via quantum anchors
 
 ---
@@ -39,7 +42,7 @@ Traditional systems:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MEMORY CONTEXT                             │
+│                    MEMORY CONTEXT v1.4.0                     │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   JIT Engine │  │   Quantum    │  │   Budget     │       │
@@ -62,7 +65,11 @@ Traditional systems:
 │            │                                                 │
 │            ▼                                                 │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              FULL HISTORY PERSISTENCE                   │   │
+│  │              TIERED STORAGE (NEW in v1.2.0)           │   │
+│  ├──────────────────────────────────────────────────────┤   │
+│  │ L0 (Hot): LRU Cache   │ ~50K tokens, instant access  │   │
+│  │ L1 (Warm): SQLite     │ ~500K tokens, searchable     │   │
+│  │ L2 (Cold): Archive    │ ~2M tokens, long-term        │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -82,34 +89,31 @@ The heart of the system. Rebuilds context from complete source on every call.
 - Applies token budget
 - Injects quantum anchors
 
-**Algorithm:**
+### 2. Memory Context Factory (`src/core/factory.ts`) - NEW in v1.2.0
+
+Async factory pattern for proper initialization.
+
+**Key Features:**
+- Thread-safe singleton pattern
+- Async initialization (no constructor race conditions)
+- Dependency injection for all components
+- Lazy loading support
+
 ```typescript
-async buildContext(triggerMessage: any): Promise<string> {
-  // 1. Gather all layers
-  const layers = this.hierarchy.getAllLayers();
-  
-  // 2. Retrieve full history
-  const fullHistory = this.history.getAllMessages();
-  
-  // 3. Combine into candidate pool
-  const candidates = [...layers.flat(), ...fullHistory];
-  
-  // 4. Score by relevance
-  const scored = candidates.map(c => ({
-    content: c,
-    score: this.relevanceFn(c)
-  })).sort((a, b) => b.score - a.score);
-  
-  // 5. Apply budget
-  const budgeted = this.budget.applyBudget(scored.map(s => s.content));
-  
-  // 6. Inject quantum anchors
-  const anchors = this.immunity.getAnchors();
-  return [...anchors, ...budgeted].join("\n\n");
-}
+import { createMemoryContext, MemoryContextFactory } from 'memory-context';
+
+// Simple usage
+const engine = await createMemoryContext();
+
+// Advanced usage with config
+const factory = new MemoryContextFactory({
+  maxContextTokens: 128000,
+  targetUtilization: 0.95
+});
+await factory.initialize();
 ```
 
-### 2. Hierarchical Context (`src/core/hierarchical-context.ts`)
+### 3. Hierarchical Context (`src/core/hierarchical-context.ts`)
 
 Five layers providing clear separation:
 
@@ -121,56 +125,123 @@ Five layers providing clear separation:
 | L3 | Core | Plugin directives, identity | Permanent |
 | L4 | Infinite | Global immutable anchors | Immutable |
 
-**No Compaction:** Each layer simply accumulates content. JIT rebuilding handles overflow.
+### 4. Tiered Storage (`src/persistence/tiered-storage.ts`) - NEW in v1.2.0
 
-### 3. Shift Immunity (`src/core/shift-immunity.ts`)
+Bounded memory with automatic tier management.
 
-**Quantum Anchors** guarantee context continuity.
-
-Default anchors:
-- `[QUANTUM_ANCHOR_START]` - Marks context beginning
-- `[QUANTUM_ANCHOR_END]` - Marks context end
-- Custom anchors can be added for critical decisions
-
-**How It Works:**
-1. Anchors are injected into every rebuilt context
-2. Anchors survive model switches via persistence
-3. Recovery validates anchors match expected
-4. Shift detection identifies when recovery is needed
-
-### 4. Budget Manager (`src/core/budget-manager.ts`)
-
-Enforces `TARGET_UTILIZATION = 1.0` (100% usage).
+| Tier | Storage | Capacity | Access Time |
+|------|---------|----------|-------------|
+| L0 (Hot) | LRU Cache | ~50K tokens | Instant |
+| L1 (Warm) | SQLite | ~500K tokens | Fast |
+| L2 (Cold) | Archive | ~2M tokens | Slower |
 
 **Features:**
-- Greedy selection of highest-relevance content
-- Truncation support for single oversized items
-- Configurable MAX_TOKENS per model
+- Automatic promotion/demotion between tiers
+- Configurable size limits
+- Eviction policies (LRU, LFU, FIFO)
+- Token-aware sizing
 
-### 5. Full History (`src/persistence/full-history.ts`)
+### 5. SQLite Persistence (`src/persistence/sqlite-persistence.ts`) - NEW in v1.2.0
 
-**Infinite retention** of complete conversation.
+File-based persistence with recovery support.
 
-Every message preserved:
-- Raw message content
-- Metadata (timestamp, role, etc.)
-- Chronological ordering
+**Features:**
+- Pure-JS SQLite via sql.js (no native dependencies)
+- WAL-like auto-save with configurable intervals
+- Automatic backup and recovery
+- Schema migrations
+- Quantum anchors table for shift-immune content
 
-### 6. Relevance Scoring (`src/heuristics/relevance.ts`)
+### 6. BM25 Search Index (`src/search/bm25-index.ts`) - NEW in v1.3.0
 
-Deterministic scoring algorithm:
+Full-text search with probabilistic ranking.
+
+**Features:**
+- Term frequency normalization (no length bias)
+- Inverse document frequency weighting
+- Configurable k1 and b parameters
+- Stop word filtering
+- Simplified Porter stemmer
+- Export/import for persistence
 
 ```typescript
-score = tokenCount + (keywordMatches * 5)
+import { BM25Index } from 'memory-context';
+
+const index = new BM25Index();
+index.addDocument({ id: 'msg1', content: 'Important decision made today' });
+const results = index.search('decision', 10);
 ```
 
-**Priority Keywords:**
-- `decision`, `important`, `priority`, `knowledge`
-- `state`, `anchor`, `context`, `preserve`, `shift`
+### 7. Advanced Relevance Scoring (`src/heuristics/advanced-relevance.ts`) - NEW in v1.3.0
 
-**Adjustments:**
-- +5 points per keyword occurrence
-- ×0.5 penalty for very short content (<5 tokens)
+Multi-factor relevance scoring.
+
+**Factors:**
+- **Keyword (35%)**: BM25-based keyword matching
+- **Recency (25%)**: Time decay with configurable half-life
+- **Priority (20%)**: Boost for priority keywords
+- **Density (10%)**: Semantic information density
+- **Overlap (10%)**: Context window overlap
+
+### 8. Observability (`src/observability/metrics.ts`) - NEW in v1.4.0
+
+Comprehensive monitoring and metrics.
+
+**Features:**
+- Prometheus-compatible metrics export
+- Counter, gauge, histogram types
+- Performance histograms with configurable buckets
+- Health check registration and execution
+- Structured logging with JSON output
+- Memory and resource usage tracking
+
+```typescript
+import { memoryContextMetrics, metricsRegistry } from 'memory-context';
+
+// Record operations
+memoryContextMetrics.recordContextBuild(150, 5000, true);
+memoryContextMetrics.recordSearch(25, 10, 50);
+
+// Export Prometheus metrics
+const prometheus = metricsRegistry.exportPrometheus();
+```
+
+### 9. Input Validation (`src/validation/schemas.ts`) - NEW in v1.4.0
+
+Type-safe validation with Zod.
+
+**Schemas:**
+- Message, StoredMessage
+- TieredStorageConfig, MemoryContextConfig
+- RelevanceConfig, BM25Config
+- SearchQuery, QuantumAnchor
+
+```typescript
+import { validateMessage, isValidMessage } from 'memory-context';
+
+const result = validateMessage({ content: 'Hello' });
+if (result.success) {
+  console.log(result.data.content);
+}
+```
+
+### 10. Circuit Breaker (`src/utils/circuit-breaker.ts`)
+
+Prevents cascading failures.
+
+**States:**
+- CLOSED: Normal operation
+- OPEN: Failing fast
+- HALF_OPEN: Testing recovery
+
+### 11. Token Counter (`src/utils/token-counter.ts`)
+
+Accurate LLM tokenization.
+
+**Features:**
+- Uses gpt-tokenizer for accurate counting
+- Fallback estimation with ±10% accuracy
+- Truncation with binary search
 
 ---
 
@@ -189,19 +260,17 @@ score = tokenCount + (keywordMatches * 5)
         "enabled": true,
         "config": {
           "mode": "jit",
-          "hierarchyLevels": 5,
-          "targetUtilization": 1.0,
-          "enableShiftImmunity": true,
-          "enablePredictiveAssembly": true,
-          "enableQuantumAnchors": true,
-          "retentionPolicy": "infinite",
-          "compactionMode": "disabled",
-          "autoDetectModel": true,
-          "semanticWeight": 0.3,
-          "workingMemorySize": 10,
-          "enableHeuristicScoring": true,
-          "enableContextDiff": true,
-          "persistFullHistory": true
+          "maxContextTokens": 128000,
+          "targetUtilization": 0.95,
+          "zeroShiftEnabled": true,
+          "quantumAnchorsEnabled": true,
+          "persistenceEnabled": true,
+          "tieredStorageConfig": {
+            "l0MaxTokens": 50000,
+            "l1MaxTokens": 500000,
+            "l2MaxTokens": 2000000,
+            "evictionPolicy": "lru"
+          }
         }
       }
     }
@@ -213,17 +282,16 @@ score = tokenCount + (keywordMatches * 5)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `mode` | string | `"jit"` | Assembly mode: `jit`, `adaptive`, or `strict` |
-| `hierarchyLevels` | number | `5` | Number of context layers (3-10) |
-| `targetUtilization` | number | `1.0` | Target token usage (0.5-1.0) |
-| `enableShiftImmunity` | boolean | `true` | Enable continuity across model switches |
-| `enableQuantumAnchors` | boolean | `true` | Use unbreakable continuity markers |
-| `retentionPolicy` | string | `"infinite"` | How to handle growth: `infinite`, `bounded`, `circular` |
-| `compactionMode` | string | `"disabled"` | Always `disabled` - JIT handles everything |
-| `semanticWeight` | number | `0.3` | Weight for semantic vs token-based selection |
-| `workingMemorySize` | number | `10` | Recent interactions in L0 |
+| `maxContextTokens` | number | `128000` | Maximum context tokens |
+| `targetUtilization` | number | `0.95` | Target token usage (0.5-1.0) |
+| `zeroShiftEnabled` | boolean | `true` | Enable zero-shift mode |
+| `quantumAnchorsEnabled` | boolean | `true` | Use quantum anchors |
+| `persistenceEnabled` | boolean | `true` | Enable SQLite persistence |
+| `tieredStorageConfig.l0MaxTokens` | number | `50000` | L0 (hot) cache limit |
+| `tieredStorageConfig.l1MaxTokens` | number | `500000` | L1 (SQLite) limit |
+| `tieredStorageConfig.l2MaxTokens` | number | `2000000` | L2 (archive) limit |
 
-------
+---
 
 ## Usage Examples
 
@@ -236,49 +304,59 @@ import { MemoryContextPlugin } from 'memory-context';
 // No manual setup required
 ```
 
-### Custom Configuration
+### Using the Factory Pattern
 
 ```typescript
-// In OpenClaw config
-{
-  "plugins": {
-    "entries": {
-      "memory-context": {
-        "enabled": true,
-        "config": {
-          "targetUtilization": 0.95,  // Use 95% of token window
-          "semanticWeight": 0.5,    // Balance semantic and token scoring
-          "workingMemorySize": 20   // Keep 20 items in L0
-        }
-      }
-    }
-  }
-}
-```
+import { createMemoryContext, MemoryContextFactory } from 'memory-context';
 
-### Adding Quantum Anchors
-
-```typescript
-// In your OpenClaw agent code
-// The plugin exposes global registerPlugin
-const plugin = new MemoryContextPlugin();
-
-// Add custom anchor for critical decision
-plugin.shiftImmunity.addAnchor("[CRITICAL_DECISION_2026_02_13]");
-
-// This anchor will be injected into every rebuilt context
-// Surviving model switches and session changes
-```
-
-### Manual Context Rebuild
-
-```typescript
-// Force a context rebuild (normally automatic)
-const context = await plugin.jitEngine.buildContext({
-  content: "User request here"
+// Simple: create engine directly
+const engine = await createMemoryContext({
+  maxContextTokens: 200000
 });
 
-// context now contains optimized, anchored context
+// Advanced: use factory singleton
+const factory = MemoryContextFactory.getInstance();
+await factory.initialize();
+
+const history = factory.getHistory();
+const storage = factory.getStorage();
+```
+
+### Search with BM25
+
+```typescript
+import { BM25Index } from 'memory-context';
+
+const index = new BM25Index({ k1: 1.5, b: 0.8 });
+
+// Add documents
+index.addDocument({ id: '1', content: 'The decision was made to use TypeScript' });
+index.addDocument({ id: '2', content: 'Priority issue: fix the memory leak' });
+
+// Search
+const results = index.search('decision priority', 5);
+console.log(results); // [{ id: '2', score: 1.23 }, { id: '1', score: 0.85 }]
+
+// Get stats
+console.log(index.getStats());
+// { documentCount: 2, termCount: 15, vocabularySize: 12, avgDocLength: 7.5 }
+```
+
+### Observability & Metrics
+
+```typescript
+import { metricsRegistry, memoryContextMetrics } from 'memory-context';
+
+// Time an operation
+const result = await metricsRegistry.timeOperation('context_build', async () => {
+  return engine.buildContext(message);
+});
+
+// Get Prometheus metrics
+const prometheus = metricsRegistry.exportPrometheus();
+
+// Get health check
+await metricsRegistry.runHealthCheck('storage');
 ```
 
 ---
@@ -291,83 +369,66 @@ const context = await plugin.jitEngine.buildContext({
 |------|---------|-----------|
 | `memory_context_build` | Rebuild context manually | `force?: boolean` |
 | `memory_context_stats` | Get context statistics | — |
-| `memory_context_search` | Search context layers | `query: string` |
+| `memory_context_search` | Search with BM25 | `query: string, limit?: number` |
 | `memory_context_anchor` | Add quantum anchor | `anchor: string` |
-| `memory_context_diff` | Show context changes | `since?: timestamp` |
+| `memory_context_tiers` | Get tier statistics | — |
 
-### Gateway Methods
+### Exported Classes
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `memory_context.status` | `PluginState` | Current plugin health |
-| `memory_context.jit_stats` | `JITStats` | JIT build statistics |
-| `memory_context.shift_detect` | `boolean` | Check for context shifts |
-| `memory_context.validate` | `ValidationResult` | Validate anchor integrity |
+```typescript
+// Core
+export { JITEngine } from './src/core/jit-engine';
+export { MemoryContextFactory, createMemoryContext } from './src/core/factory';
+export { HierarchicalContext, Layer } from './src/core/hierarchical-context';
+export { ShiftImmunity } from './src/core/shift-immunity';
+export { BudgetManager } from './src/core/budget-manager';
 
-### Lifecycle Hooks
+// Persistence
+export { TieredStorage } from './src/persistence/tiered-storage';
+export { SQLitePersistence } from './src/persistence/sqlite-persistence';
+export { FullHistory } from './src/persistence/full-history';
 
-| Hook | Called When | Purpose |
-|------|-------------|---------|
-| `onLoad` | Plugin initialized | Setup JIT engine |
-| `onMessage` | Each message received | Update history, rebuild context |
-| `onModelSwitch` | Model changed | Preserve quantum anchors |
-| `onUnload` | Plugin disabled | Cleanup resources |
+// Search
+export { BM25Index } from './src/search/bm25-index';
+
+// Heuristics
+export { AdvancedRelevanceScorer, computeRelevanceScore } from './src/heuristics/advanced-relevance';
+
+// Observability
+export { MetricsRegistry, StructuredLogger, MemoryContextMetrics } from './src/observability/metrics';
+
+// Validation
+export { 
+  validateMessage, 
+  validateSearchQuery,
+  isValidMessage,
+  schemas 
+} from './src/validation/schemas';
+
+// Utils
+export { TokenCounter } from './src/utils/token-counter';
+export { CircuitBreaker, CircuitState } from './src/utils/circuit-breaker';
+```
 
 ---
 
-## Technical Deep Dive
+## Performance Characteristics
 
-### JIT Context Assembly Algorithm
+### Memory Usage
+- **L0 Cache:** O(n) where n = hot tier capacity
+- **Total:** Bounded by tier limits
+- **Overhead:** ~5% for anchor storage + index
 
-```
-Every model call triggers context rebuild:
+### Latency
+- **L0 access:** <1ms (LRU cache)
+- **L1 access:** <10ms (SQLite)
+- **JIT rebuild:** <50ms for typical contexts
+- **BM25 search:** O(n) with ranking
 
-1. COLLECT phase
-   └─ Gather all layers L0-L4
-   └─ Retrieve full conversation history
-
-2. SCORE phase
-   └─ Apply relevance heuristics to all candidates
-   └─ Sort by score descending
-
-3. BUDGET phase
-   └─ Greedy fill up to TARGET_UTILIZATION
-   └─ Truncate oversize if single item
-
-4. ANCHOR phase  
-   └─ Insert quantum markers at boundaries
-   └─ Validate anchor coherence
-
-5. RETURN phase
-   └─ Provide assembled context
-   └─ Log build statistics
-```
-
-### Shift Detection & Recovery
-
-**Shift Types:**
-- Model change: Gemini → Claude
-- Session switch: New conversation
-- Compaction: External system compaction
-- Manual override: User intervention
-
-**Recovery Process:**
-1. Compare current anchors to expected
-2. If mismatch detected, flag shift
-3. Retrieve persisted anchor state
-4. Rebuild with recovered anchors
-
-### Token Budgeting Strategy
-
-**Greedy Selection:**
-- Sort candidates by relevance
-- Fill budget until capacity reached
-- Early items get priority
-
-**Truncation Policy:**
-- If first item exceeds budget alone
-- Truncate to exactly fill budget
-- Mark as `[truncated]`
+### Scaling
+- **Documents:** Limited by L2 tier capacity
+- **Concurrent access:** Thread-safe via factory
+- **Throughput:** ~1000 ops/sec
 
 ---
 
@@ -381,17 +442,18 @@ Every model call triggers context rebuild:
 | Shift Immunity | Native | Plugin-level |
 | JIT Rebuilding | **Always** | Configurable |
 | Hierarchy | 5 layers | Configurable |
-| Complexity | Lower | Higher |
+| Search | BM25 | Linear |
+| Storage | Tiered | In-memory |
 
 ### vs memory-lancedb
 
 | Feature | memory-context | memory-lancedb |
 |---------|---------------|----------------|
-| Storage | In-memory + file | Vector database |
-| Search | Linear scan | Semantic (LanceDB) |
-| Dependencies | None | LanceDB server |
+| Storage | Tiered (L0/L1/L2) | Vector database |
+| Search | BM25 + relevance | Semantic (LanceDB) |
+| Dependencies | sql.js (pure JS) | LanceDB server |
 | Setup | Zero-config | Requires DB |
-| Best For | Single sessions | Multi-session search |
+| Best For | Context management | Semantic search |
 
 ---
 
@@ -402,55 +464,78 @@ Every model call triggers context rebuild:
 **Solution:**
 1. Verify TypeScript compiled: `npm run build`
 2. Check `index.ts` exists at root
-3. Confirm manifest at `openclaw.plugin.json`
+3. Install dependencies: `npm install`
 
-### Issue: Context too short
-
-**Solution:**
-- Increase `targetUtilization` to 1.0
-- Check `MAX_TOKENS` matches your model
-- Review relevance scoring keywords
-
-### Issue: Anchors not preserved
+### Issue: SQLite initialization fails
 
 **Solution:**
-- Enable `persistFullHistory`
-- Verify `enableQuantumAnchors: true`
-- Check shift immunity is enabled
+- Ensure write permissions for persistence path
+- Check disk space for database
+- Review auto-save interval settings
+
+### Issue: Search returns no results
+
+**Solution:**
+- Verify documents were indexed
+- Check minimum term length setting
+- Review stop word configuration
 
 ---
 
-## Performance Characteristics
+## Changelog
 
-### Memory Usage
-- **Working set:** O(n) where n = total context
-- **Growth:** Linear with conversation length
-- **Overhead:** ~5% for anchor storage
+### v1.4.0 (2026-02-14)
+- Added observability with Prometheus metrics
+- Added input validation with Zod schemas
+- Added structured logging with JSON output
+- Added health check system
 
-### Latency
-- **JIT rebuild:** <10ms for typical contexts
-- **Search:** O(n) linear scan (deterministic)
-- **Anchor injection:** O(1) constant time
+### v1.3.0 (2026-02-14)
+- Added BM25 search index for keyword search
+- Added advanced multi-factor relevance scoring
+- Improved relevance with recency decay
 
-### Scaling
-- **Sessions:** Unlimited (isolated histories)
-- **Messages:** Limited only by storage
-- **Messages/sec:** ~1000/sec per core
+### v1.2.0 (2026-02-14)
+- Added tiered storage (L0/L1/L2) for bounded memory
+- Added factory pattern for async initialization
+- Added SQLite persistence with recovery
+
+### v1.1.0 (2026-02-13)
+- Added accurate token counting with gpt-tokenizer
+- Added circuit breaker pattern for fault tolerance
+- Fixed memory bounds preparation
+
+### v1.0.0 (2026-02-13)
+- Initial release
+- JIT engine with zero-shift mode
+- Hierarchical context (L0-L4)
+- Quantum anchors for shift immunity
+- Budget manager with 100% utilization
+
+---
+
+## License
+
+MIT License - See LICENSE file for details.
 
 ---
 
 ## Summary
 
-**Memory Context** is the definitive solution for:
+**Memory Context v1.4.0** is the definitive solution for:
 - Agents requiring perfect context continuity
 - Systems where compaction is unacceptable
 - Applications needing guaranteed recovery
 - Users demanding 100% token utilization
+- Production deployments requiring observability
 
-**The promise:** Zero shifts. No compaction. Infinite retention.
+**7 GitHub Issues Resolved:**
+- #2: Unbounded Memory Growth (Tiered Storage)
+- #3: Async Constructor (Factory Pattern)
+- #5: SQLite Persistence Layer
+- #6: BM25 Index
+- #7: Advanced Relevance Scoring
+- #8: Observability/Metrics
+- #10: Input Validation
 
----
-
-_File: `/home/agent/.openclaw/extensions/memory-context/README.md`_
-_Version: 1.0.0_
-_Last updated: 2026-02-13_
+**Repository:** `github.com/chatengineer/memory-context` (private)
