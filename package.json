@@ -1,6 +1,6 @@
 {
   "name": "memory-context",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "The ultimate context preservation system - zero-shift, JIT hierarchical assembly with quantum anchors",
   "main": "./index.ts",
   "scripts": {
