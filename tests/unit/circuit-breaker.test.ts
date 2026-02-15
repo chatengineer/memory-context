@@ -2,7 +2,7 @@
  * Unit Tests for Circuit Breaker
  */
 
-import { CircuitBreaker, CircuitState } from '../src/utils/circuit-breaker';
+import { CircuitBreaker, CircuitState } from '../../src/utils/circuit-breaker';
 
 describe('CircuitBreaker', () => {
   let breaker: CircuitBreaker;

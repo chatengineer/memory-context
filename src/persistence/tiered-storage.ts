@@ -98,7 +98,7 @@ export class TieredStorage {
     
     // Initialize L0 LRU cache
     this.l0Cache = new LRUCache<string, StoredMessage>({
-      max: this.config.l0MaxTokens,
+      maxSize: this.config.l0MaxTokens,
       sizeCalculation: (value: StoredMessage) => value.tokenCount,
       ttl: 1000 * 60 * 60, // 1 hour TTL
       updateAgeOnGet: true,
@@ -384,15 +384,7 @@ export class TieredStorage {
   }
 
   private async promoteToL0(message: StoredMessage): Promise<void> {
-    message.tier = 'L0';
-    message.accessCount++;
-    message.lastAccess = Date.now();
-    
-    // LRU cache will handle eviction
-    this.l0Cache.set(message.id, message);
-    this.stats.promotions++;
-    
-    // Remove from lower tiers
+    // Remove from lower tiers first (before changing tier)
     if (message.tier === 'L1' && this.l1Db) {
       this.l1Db.run('DELETE FROM messages WHERE id = ?', [message.id]);
       this.l1Tokens -= message.tokenCount;
@@ -400,6 +392,14 @@ export class TieredStorage {
       this.l2Archive.delete(message.id);
       this.l2Tokens -= message.tokenCount;
     }
+    
+    message.tier = 'L0';
+    message.accessCount++;
+    message.lastAccess = Date.now();
+    
+    // LRU cache will handle eviction
+    this.l0Cache.set(message.id, message);
+    this.stats.promotions++;
   }
 
   private async queryL1(id: string): Promise<StoredMessage | null> {

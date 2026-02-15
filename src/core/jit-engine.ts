@@ -46,7 +46,7 @@ export class JITEngine {
     const layers = this.hierarchy.getAllLayers();
 
     // 2. Retrieve full conversation history (for JIT rebuilding)
-    const fullHistory = this.history.getAllMessages();
+    const fullHistory = await this.history.getAllMessages();
 
     // 3. Combine hierarchy and history into a candidate pool
     const candidates: string[] = [];
@@ -66,7 +66,7 @@ export class JITEngine {
 
     // 6. Re‑inject shift‑immune anchors (quantum anchors) to guarantee continuity
     const anchors = this.immunity.getAnchors();
-    const finalContext = [...anchors, ...budgeted].join("\n\n");
+    const finalContext = [...anchors, ...budgeted.selected].join("\n\n");
 
     return finalContext;
   }

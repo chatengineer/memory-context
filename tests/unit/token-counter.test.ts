@@ -2,7 +2,7 @@
  * Unit Tests for Token Counter
  */
 
-import { TokenCounter, defaultTokenCounter } from '../src/utils/token-counter';
+import { TokenCounter, defaultTokenCounter } from '../../src/utils/token-counter';
 
 describe('TokenCounter', () => {
   let counter: TokenCounter;

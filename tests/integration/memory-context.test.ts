@@ -2,9 +2,9 @@
  * Integration Tests for Memory Context
  */
 
-import { MemoryContextFactory, createMemoryContext } from '../src/core/factory';
-import { TieredStorage } from '../src/persistence/tiered-storage';
-import { BM25Index } from '../src/search/bm25-index';
+import { MemoryContextFactory, createMemoryContext } from '../../src/core/factory';
+import { TieredStorage } from '../../src/persistence/tiered-storage';
+import { BM25Index } from '../../src/search/bm25-index';
 
 describe('MemoryContext Integration', () => {
   describe('Factory', () => {

@@ -2,7 +2,7 @@
  * Unit Tests for BM25 Index
  */
 
-import { BM25Index } from '../src/search/bm25-index';
+import { BM25Index } from '../../src/search/bm25-index';
 
 describe('BM25Index', () => {
   let index: BM25Index;
