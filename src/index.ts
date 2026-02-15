@@ -83,10 +83,9 @@ export class MemoryContextPlugin {
     hierarchy.addContent(Layer.L0, message.content);
     
     // Rebuild context for the next model call
-    const context = await engine.buildContext(message);
+    await engine.buildContext(message);
     
     console.log("[memory-context] Rebuilt context for next model call");
-    return context;
   }
 
   /** Called when the underlying model switches (e.g., Gemini to Claude) */
@@ -122,6 +121,8 @@ export class MemoryContextPlugin {
     return this.initialized;
   }
 }
+
+declare function registerPlugin(plugin: any): void;
 
 // Register the plugin with OpenClaw (global registration function provided by the host)
 // This is a placeholder – the real API may differ.

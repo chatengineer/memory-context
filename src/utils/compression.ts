@@ -50,6 +50,13 @@ const DEFAULT_BROTLI_CONFIG: CompressionConfig = {
   chunkSize: 16 * 1024
 };
 
+export interface CompressionStats {
+  compressed: number;
+  decompressed: number;
+  bytesSaved: number;
+  operationsFailed: number;
+}
+
 /**
  * Compressor - Handles compression/decompression operations
  */
@@ -279,14 +286,13 @@ export class CompressionManager {
   /**
    * Get compression statistics
    */
-  getStats(): typeof thisStats {
-    const thisStats = {
+  getStats(): CompressionStats {
+    return {
       compressed: this.stats.compressed,
       decompressed: this.stats.decompressed,
       bytesSaved: this.stats.bytesSaved,
       operationsFailed: this.stats.operationsFailed
     };
-    return thisStats;
   }
 
   /**

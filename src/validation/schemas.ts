@@ -157,22 +157,22 @@ export interface ValidationResult<T> {
 /**
  * Validate data against a schema
  */
-export function validate<T>(
-  schema: z.ZodSchema<T>,
+export function validate<T extends z.ZodTypeAny>(
+  schema: T,
   data: unknown
-): ValidationResult<T> {
+): ValidationResult<z.infer<T>> {
   const result = schema.safeParse(data);
 
   if (result.success) {
     return {
       success: true,
-      data: result.data
+      data: result.data as z.infer<T>
     };
   }
 
   return {
     success: false,
-    errors: result.error.issues.map(issue => ({
+    errors: (result as any).error.issues.map((issue: any) => ({
       path: issue.path.join('.'),
       message: issue.message,
       code: issue.code

@@ -412,9 +412,9 @@ export class AnchorRegistry {
    * Update a state anchor (creates new version)
    */
   updateState(key: string, newValue: unknown): StateAnchor | null {
-    const existing = this.getByType('state')
+    const existing = (this.getByType('state') as StateAnchor[])
       .filter(a => a.key === key)
-      .sort((a, b) => b.version - a.version)[0] as StateAnchor | undefined;
+      .sort((a, b) => b.version - a.version)[0];
 
     const newAnchor = AnchorFactory.createState(
       key,
