@@ -40,6 +40,17 @@ const DEFAULT_CONFIG: PersistenceConfig = {
 const SCHEMA_VERSION = 1;
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS schema_info(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    metadata TEXT,
+    timestamp INTEGER NOT NULL,
+    token_count INTEGER DEFAULT 0,
+    access_count INTEGER DEFAULT 0,
+    last_access INTEGER DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_messages_last_access ON messages(last_access);
 `;
 
 export class SQLitePersistence {
