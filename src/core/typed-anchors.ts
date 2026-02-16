@@ -35,7 +35,7 @@ export const DecisionAnchorSchema = z.object({
   alternatives: z.array(z.string()).optional(),
   impact: z.enum(['high', 'medium', 'low']).optional(),
   timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export const StateAnchorSchema = z.object({
@@ -47,7 +47,7 @@ export const StateAnchorSchema = z.object({
   version: z.number(),
   previousValue: z.unknown().optional(),
   timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export const ReferenceAnchorSchema = z.object({
@@ -58,7 +58,7 @@ export const ReferenceAnchorSchema = z.object({
   reference: z.string(),
   title: z.string().optional(),
   timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export const CustomAnchorSchema = z.object({
@@ -66,9 +66,9 @@ export const CustomAnchorSchema = z.object({
   id: z.string(),
   content: z.string(),
   customType: z.string(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export const TypedAnchorSchema = z.discriminatedUnion('type', [

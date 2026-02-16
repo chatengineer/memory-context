@@ -21,7 +21,7 @@ export const MessageSchema = z.object({
   content: z.string().min(1, 'Message content cannot be empty'),
   role: z.enum(['user', 'assistant', 'system']).optional(),
   timestamp: z.number().int().positive().optional(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 }).passthrough(); // Allow additional fields
 
 export type ValidatedMessage = z.infer<typeof MessageSchema>;
@@ -37,7 +37,7 @@ export const StoredMessageSchema = z.object({
   timestamp: z.number().int().positive(),
   accessCount: z.number().int().nonnegative(),
   lastAccess: z.number().int().positive(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export type ValidatedStoredMessage = z.infer<typeof StoredMessageSchema>;
@@ -82,7 +82,7 @@ export const RelevanceConfigSchema = z.object({
   halfLife: z.number().positive().default(86400000), // 24 hours
   maxAge: z.number().positive().default(604800000), // 7 days
   priorityKeywords: z.set(z.string()).optional(),
-  metadataWeights: z.record(z.number()).optional()
+  metadataWeights: z.record(z.string(), z.number()).optional()
 }).refine(
   (data) => {
     const weights = [
@@ -120,7 +120,7 @@ export type ValidatedBM25Config = z.infer<typeof BM25ConfigSchema>;
 export const SearchQuerySchema = z.object({
   query: z.string().min(1, 'Search query cannot be empty'),
   limit: z.number().int().positive().max(1000).optional(),
-  filters: z.record(z.unknown()).optional(),
+  filters: z.record(z.string(), z.unknown()).optional(),
   tier: z.enum(['L0', 'L1', 'L2', 'all']).optional()
 });
 
@@ -135,7 +135,7 @@ export const QuantumAnchorSchema = z.object({
   type: z.enum(['decision', 'state', 'reference', 'custom']),
   createdAt: z.number().int().positive(),
   priority: z.number().int().min(0).max(10).default(5),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export type ValidatedQuantumAnchor = z.infer<typeof QuantumAnchorSchema>;
