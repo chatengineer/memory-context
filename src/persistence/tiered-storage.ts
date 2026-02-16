@@ -12,6 +12,7 @@
 import { LRUCache } from 'lru-cache';
 import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
 import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
+import { generateSecureId } from '../utils/security';
 
 // Initialize sql.js lazily
 let SQL: any = null;
@@ -77,7 +78,6 @@ export class TieredStorage {
   private config: TieredStorageConfig;
   private tokenCounter: TokenCounter;
   private initialized: boolean = false;
-  private messageIdCounter: number = 0;
   
   // Statistics
   private stats = {
@@ -320,7 +320,7 @@ export class TieredStorage {
   // --- Private Methods ---
 
   private generateId(): string {
-    return `msg_${Date.now()}_${++this.messageIdCounter}`;
+    return `msg_${generateSecureId(32)}`;
   }
 
   private async ensureCapacity(tier: 'L0' | 'L1' | 'L2', neededTokens: number): Promise<void> {
