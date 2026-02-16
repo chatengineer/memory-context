@@ -22,7 +22,7 @@
     "gpt-tokenizer": "^3.4.0",
     "lru-cache": "^11.0.0",
     "sql.js": "^1.10.3",
-    "zod": "^3.25.76"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
