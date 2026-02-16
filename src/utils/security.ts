@@ -1,8 +1,8 @@
 /**
  * Security Utilities
- * 
+ *
  * Low Priority Issue #18: Security Hardening
- * 
+ *
  * Provides security measures:
  * - Input sanitization
  * - SQL injection prevention
@@ -38,25 +38,33 @@ export function sanitizeInput(
   options: Partial<SanitizationOptions> = {}
 ): string {
   const opts = { ...DEFAULT_SANITIZATION_OPTIONS, ...options };
-  
+
   let sanitized = input;
-  
+
   // Strip null bytes
   if (opts.stripNullBytes) {
     sanitized = sanitized.replace(/\0/g, '');
   }
-  
+
   // Limit length
   if (sanitized.length > opts.maxStringLength) {
     sanitized = sanitized.substring(0, opts.maxStringLength);
   }
-  
-  // Remove dangerous patterns
-  sanitized = sanitized
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+\s*=/gi, '');
-  
+
+  // Recursively remove dangerous patterns to prevent bypasses (e.g., javajavascript:script:)
+  let lastSanitized: string;
+  let iterations = 0;
+  const maxIterations = 10; // Safety limit
+
+  do {
+    lastSanitized = sanitized;
+    sanitized = sanitized
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/javascript:/gi, '')
+      .replace(/on\w+\s*=/gi, '');
+    iterations++;
+  } while (sanitized !== lastSanitized && iterations < maxIterations);
+
   // Escape HTML if requested
   if (opts.escapeHtml) {
     sanitized = sanitized
@@ -66,7 +74,7 @@ export function sanitizeInput(
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#x27;');
   }
-  
+
   return sanitized;
 }
 
@@ -78,10 +86,10 @@ export function sanitizeObject<T extends Record<string, any>>(
   options: Partial<SanitizationOptions> = {}
 ): T {
   const result: any = {};
-  
+
   for (const [key, value] of Object.entries(obj)) {
     const sanitizedKey = sanitizeInput(key, options);
-    
+
     if (typeof value === 'string') {
       result[sanitizedKey] = sanitizeInput(value, options);
     } else if (typeof value === 'object' && value !== null) {
@@ -90,7 +98,7 @@ export function sanitizeObject<T extends Record<string, any>>(
       result[sanitizedKey] = value;
     }
   }
-  
+
   return result;
 }
 
@@ -160,16 +168,26 @@ const DANGEROUS_PATH_PATTERNS = [
 
 /**
  * Check for path traversal attempts
+ * Decodes URL-encoded characters to prevent bypasses like %2e%2e%2f
  */
 export function detectPathTraversal(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/');
-  
+  // Decode URL-encoded characters to catch encoded traversal attempts
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch (e) {
+    // If decoding fails, treat the path as potentially dangerous
+    decoded = path;
+  }
+
+  const normalized = decoded.replace(/\\/g, '/');
+
   for (const pattern of DANGEROUS_PATH_PATTERNS) {
     if (pattern.test(normalized)) {
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -181,18 +199,18 @@ export function sanitizePath(basePath: string, relativePath: string): string | n
   if (detectPathTraversal(relativePath)) {
     return null;
   }
-  
+
   // Normalize paths
   const normalizedBase = basePath.replace(/\\/g, '/').replace(/\/$/, '');
   const normalizedRelative = relativePath.replace(/\\/g, '/').replace(/^\//, '');
-  
+
   // Construct full path
   const fullPath = `${normalizedBase}/${normalizedRelative}`;
-  
+
   // Resolve and verify it's within base
   const parts = fullPath.split('/');
   const resolved: string[] = [];
-  
+
   for (const part of parts) {
     if (part === '..') {
       resolved.pop();
@@ -200,14 +218,14 @@ export function sanitizePath(basePath: string, relativePath: string): string | n
       resolved.push(part);
     }
   }
-  
+
   const resolvedPath = resolved.join('/');
-  
+
   // Verify path is within base directory
   if (!resolvedPath.startsWith(normalizedBase)) {
     return null;
   }
-  
+
   return resolvedPath;
 }
 
@@ -246,19 +264,19 @@ class AuditLogger {
    */
   log(entry: Omit<AuditLogEntry, 'timestamp'>): void {
     if (!this.enabled) return;
-    
+
     const fullEntry: AuditLogEntry = {
       ...entry,
       timestamp: Date.now()
     };
-    
+
     this.entries.push(fullEntry);
-    
+
     // Trim if over limit
     if (this.entries.length > this.maxEntries) {
       this.entries = this.entries.slice(-this.maxEntries);
     }
-    
+
     // Log to console for visibility
     const level = entry.result === 'denied' ? 'warn' : 'log';
     console[level](`[AUDIT] ${entry.action}: ${entry.result}`, entry.details || '');
@@ -282,7 +300,7 @@ class AuditLogger {
    * Get failed/denied entries
    */
   getFailed(): AuditLogEntry[] {
-    return this.entries.filter(e => 
+    return this.entries.filter(e =>
       e.result === 'failure' || e.result === 'denied'
     );
   }
@@ -337,7 +355,7 @@ class RateLimiter {
   check(key: string): { allowed: boolean; remaining: number; resetIn: number } {
     const now = Date.now();
     let entry = this.limits.get(key);
-    
+
     if (!entry || now - entry.firstRequest > this.windowMs) {
       entry = {
         count: 0,
@@ -346,12 +364,12 @@ class RateLimiter {
       };
       this.limits.set(key, entry);
     }
-    
+
     entry.count++;
-    
+
     const remaining = Math.max(0, this.maxRequests - entry.count);
     const resetIn = Math.max(0, this.windowMs - (now - entry.firstRequest));
-    
+
     return {
       allowed: entry.count <= this.maxRequests,
       remaining,

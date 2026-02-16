@@ -5,7 +5,7 @@
  * Falls back to estimation if tokenizer unavailable
  */
 
-import { encode } from 'gpt-tokenizer/model/gpt-4o';
+import { encode, decode } from 'gpt-tokenizer/model/gpt-4o';
 
 export enum TokenizerModel {
   GPT4 = 'gpt-4',
@@ -72,15 +72,15 @@ export class TokenCounter {
    * Decode token IDs to text (if possible)
    */
   decode(tokens: number[]): string {
-    if (this.encoder && this.errorCount < this.maxErrors) {
+    if (this.errorCount < this.maxErrors) {
       try {
-        // gpt-tokenizer doesn't expose decode, so try manually
-        return String.fromCharCode(...tokens);
+        return decode(tokens);
       } catch (e) {
+        this.errorCount++;
         return '[decode failed]';
       }
     }
-    return String.fromCharCode(...tokens);
+    return '[tokenizer disabled]';
   }
   
   /**

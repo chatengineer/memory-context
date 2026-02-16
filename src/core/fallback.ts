@@ -247,6 +247,7 @@ export class FallbackManager {
     this.recoveryTimer = setInterval(() => {
       this.checkRecovery();
     }, this.config.recoveryCheckInterval);
+    this.recoveryTimer.unref(); // Allow process to exit
   }
 
   /**
