@@ -13,15 +13,16 @@ import { LRUCache } from 'lru-cache';
 import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
 import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
 import { generateSecureId } from '../utils/security';
+import type { Database, SqlJsStatic } from 'sql.js';
 
 // Initialize sql.js lazily
-let SQL: any = null;
-async function getSqlJs(): Promise<any> {
+let SQL: SqlJsStatic | null = null;
+async function getSqlJs(): Promise<SqlJsStatic> {
   if (!SQL) {
     const sqlJs = await import('sql.js');
-    SQL = await sqlJs.default();
+    SQL = await (sqlJs.default as any)();
   }
-  return SQL;
+  return SQL!;
 }
 
 export interface StorageTier {
@@ -68,7 +69,7 @@ export class TieredStorage {
   private l0Cache: LRUCache<string, StoredMessage>;
   
   // L1: Warm tier - SQLite for searchable persistence
-  private l1Db: any = null;
+  private l1Db: Database | null = null;
   private l1Tokens: number = 0;
   
   // L2: Cold tier - Compressed archive (in-memory for now, can be file-based)

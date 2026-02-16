@@ -13,6 +13,7 @@
  */
 
 import { BM25Index } from '../search/bm25-index';
+import { Metadata } from '../types';
 
 export interface RelevanceConfig {
   // Weight factors (should sum to ~1.0)
@@ -94,7 +95,7 @@ export class AdvancedRelevanceScorer {
    */
   computeScore(
     content: string,
-    metadata?: Record<string, any>,
+    metadata?: Metadata,
     context?: ScoringContext
   ): RelevanceResult {
     const factors = {
@@ -286,7 +287,7 @@ export const advancedRelevanceScorer = new AdvancedRelevanceScorer();
 // Backward-compatible function for existing code
 export function computeRelevanceScore(
   content: string,
-  metadata?: Record<string, any>,
+  metadata?: Metadata,
   context?: ScoringContext
 ): number {
   return advancedRelevanceScorer.computeScore(content, metadata, context).score;

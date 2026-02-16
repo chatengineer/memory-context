@@ -15,6 +15,8 @@
  * - N-gram support for partial matching
  */
 
+import { Metadata } from '../types';
+
 export interface BM25Config {
   k1: number;           // Term frequency saturation parameter (typically 1.2-2.0)
   b: number;            // Length normalization parameter (typically 0.75)
@@ -45,14 +47,14 @@ const DEFAULT_STOP_WORDS = new Set([
 export interface Document {
   id: string;
   content: string;
-  metadata?: Record<string, any>;
+  metadata?: Metadata;
 }
 
 export interface SearchResult {
   id: string;
   score: number;
   terms: string[];
-  metadata?: Record<string, any>;
+  metadata?: Metadata;
 }
 
 interface TermInfo {

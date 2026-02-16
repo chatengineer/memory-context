@@ -4,6 +4,7 @@
 
 import { TieredStorage, StoredMessage, tieredStorage } from './tiered-storage';
 import { storageBreaker } from '../utils/circuit-breaker';
+import { Metadata } from '../types';
 
 /**
  * Message format compatible with OpenClaw's message structure
@@ -13,7 +14,7 @@ export interface Message {
   content: string;
   role?: 'user' | 'assistant' | 'system';
   timestamp?: number;
-  [key: string]: any;
+  [key: string]: string | number | boolean | null | undefined | any;
 }
 
 /**
@@ -54,10 +55,10 @@ export class FullHistory {
   }
 
   /** Add a new message to the history with automatic tier placement */
-  async addMessage(msg: any): Promise<string> {
+  async addMessage(msg: Partial<Message>): Promise<string> {
     const message: Message = {
       content: msg?.content ?? String(msg),
-      role: msg?.role,
+      role: msg?.role as any,
       timestamp: msg?.timestamp || Date.now(),
       ...msg
     };
@@ -151,7 +152,7 @@ export class FullHistory {
   }
 
   /** Get storage statistics */
-  getStats(): { totalTokens: number; tiers: any } {
+  getStats(): { totalTokens: number; tiers: ReturnType<TieredStorage['getTierStats']> } {
     return {
       totalTokens: this.getTotalTokens(),
       tiers: this.storage.getTierStats()

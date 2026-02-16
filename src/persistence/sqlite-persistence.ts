@@ -3,14 +3,15 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import type { Database, SqlJsStatic } from 'sql.js';
 
-let SQL: any = null;
-async function getSqlJs(): Promise<any> {
+let SQL: SqlJsStatic | null = null;
+async function getSqlJs(): Promise<SqlJsStatic> {
   if (!SQL) {
     const sqlJs = await import("sql.js");
-    SQL = await sqlJs.default();
+    SQL = await (sqlJs.default as any)();
   }
-  return SQL;
+  return SQL!;
 }
 
 export interface PersistenceConfig {
@@ -54,7 +55,7 @@ const SCHEMA = `
 `;
 
 export class SQLitePersistence {
-  private db: any = null;
+  private db: Database | null = null;
   private config: PersistenceConfig;
   private initialized: boolean = false;
   private dirty: boolean = false;
@@ -120,34 +121,34 @@ export class SQLitePersistence {
   }
 
   private async applySchema(): Promise<void> {
-    this.db.run(SCHEMA);
-    const result = this.db.exec("SELECT version FROM schema_info");
+    this.db!.run(SCHEMA);
+    const result = this.db!.exec("SELECT version FROM schema_info");
     const currentVersion = result.length && result[0].values.length ? result[0].values[0][0] as number : 0;
     if (currentVersion < SCHEMA_VERSION) {
-      this.db.run("INSERT INTO schema_info (version, applied_at) VALUES (?, ?)", [1, Date.now()]);
+      this.db!.run("INSERT INTO schema_info (version, applied_at) VALUES (?, ?)", [1, Date.now()]);
     }
     this.dirty = true;
   }
 
-  getDb(): any { return this.db; }
+  getDb(): Database | null { return this.db; }
 
-  exec(sql: string, params?: any[]): any {
+  exec(sql: string, params?: (string | number | null | Uint8Array)[]): any {
     this.ensureInitialized();
     this.dirty = true;
-    return params ? this.db.run(sql, params) : this.db.exec(sql);
+    return params ? this.db!.run(sql, params) : this.db!.exec(sql);
   }
 
-  query(sql: string, params?: any[]): any[] {
+  query(sql: string, params?: (string | number | null | Uint8Array)[]): Record<string, any>[] {
     this.ensureInitialized();
     if (params) {
-      const stmt = this.db.prepare(sql);
+      const stmt = this.db!.prepare(sql);
       stmt.bind(params);
       const results: any[] = [];
       while (stmt.step()) results.push(stmt.getAsObject());
       stmt.free();
       return results;
     }
-    const result = this.db.exec(sql);
+    const result = this.db!.exec(sql);
     if (result.length === 0) return [];
     const columns = result[0].columns;
     return result[0].values.map((row: any[]) => {
@@ -157,11 +158,11 @@ export class SQLitePersistence {
     });
   }
 
-  run(sql: string, params?: any[]): { changes: number } {
+  run(sql: string, params?: (string | number | null | Uint8Array)[]): { changes: number } {
     this.ensureInitialized();
     this.dirty = true;
-    params ? this.db.run(sql, params) : this.db.run(sql);
-    return { changes: this.db.getRowsModified() };
+    params ? this.db!.run(sql, params) : this.db!.run(sql);
+    return { changes: this.db!.getRowsModified() };
   }
 
   async save(): Promise<void> {
@@ -173,7 +174,7 @@ export class SQLitePersistence {
   }
 
   private async doSave(): Promise<void> {
-    const data = this.db.export();
+    const data = this.db!.export();
     const buffer = Buffer.from(data);
     const tempPath = `${this.config.dbPath}.tmp`;
     fs.writeFileSync(tempPath, buffer);
@@ -185,7 +186,7 @@ export class SQLitePersistence {
   async backup(): Promise<string> {
     if (!this.config.backupPath) this.config.backupPath = `${this.config.dbPath}.backup`;
     const backupPath = `${this.config.backupPath}.${Date.now()}`;
-    const data = this.db.export();
+    const data = this.db!.export();
     fs.writeFileSync(backupPath, Buffer.from(data));
     return backupPath;
   }
@@ -235,7 +236,7 @@ export class SQLitePersistence {
     this.ensureInitialized();
     let size = 0;
     if (fs.existsSync(this.config.dbPath)) size = fs.statSync(this.config.dbPath).size;
-    const msgResult = this.db.exec("SELECT COUNT(*) FROM messages");
+    const msgResult = this.db!.exec("SELECT COUNT(*) FROM messages");
     const messageCount = msgResult.length && msgResult[0].values.length ? msgResult[0].values[0][0] as number : 0;
     return { size, messageCount };
   }
