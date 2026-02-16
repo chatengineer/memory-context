@@ -98,6 +98,8 @@ export interface Message {
   [key: string]: any;
 }
 
+export type Metadata = Record<string, string | number | boolean | null | undefined | any>;
+
 export interface PluginState {
   version: string;
   lastBuild: number;
