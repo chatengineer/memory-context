@@ -170,7 +170,8 @@ export class Compressor {
       return decompressed.toString('utf-8');
     } catch (error) {
       console.error('[Compressor] Decompression error:', error);
-      // Try to return as string anyway
+      // If we failed to decompress what we thought was a compressed stream,
+      // it might be raw data or corrupted.
       return data.toString('utf-8');
     }
   }
@@ -186,10 +187,15 @@ export class Compressor {
       return 'gzip';
     }
 
-    // Brotli doesn't have a magic number, but we can try to detect
-    // Common brotli patterns start with specific bit patterns
-    // For simplicity, we'll rely on explicit marking
-
+    // Brotli doesn't have a reliable magic number at the bitstream level
+    // that is easy to detect in a Buffer without full parsing.
+    // However, for our internal L2 storage, we will assume that if it's 
+    // passed to CompressionManager.decompress and it's not Gzip, 
+    // it's likely Brotli if the tier or explicit flag indicates so.
+    
+    // We'll return 'none' here to avoid false positives.
+    // The CompressionManager should be responsible for providing the algorithm
+    // from metadata when possible.
     return 'none';
   }
 
@@ -236,31 +242,44 @@ export class CompressionManager {
     data: string | Buffer,
     tier: 'L0' | 'L1' | 'L2'
   ): Promise<CompressionResult> {
-    switch (tier) {
-      case 'L0':
-        // No compression for hot tier
-        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        return {
-          data: buffer,
-          originalSize: buffer.length,
-          compressedSize: buffer.length,
-          algorithm: 'none',
-          ratio: 1.0
-        };
+    try {
+      switch (tier) {
+        case 'L0':
+          // No compression for hot tier
+          const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+          return {
+            data: buffer,
+            originalSize: buffer.length,
+            compressedSize: buffer.length,
+            algorithm: 'none',
+            ratio: 1.0
+          };
 
-      case 'L1':
-        // Light gzip for warm tier
-        const l1Result = await this.gzipCompressor.compress(data);
-        this.stats.compressed++;
-        this.stats.bytesSaved += l1Result.originalSize - l1Result.compressedSize;
-        return l1Result;
+        case 'L1':
+          // Light gzip for warm tier
+          const l1Result = await this.gzipCompressor.compress(data);
+          this.stats.compressed++;
+          this.stats.bytesSaved += l1Result.originalSize - l1Result.compressedSize;
+          return l1Result;
 
-      case 'L2':
-        // Brotli for cold/archive tier
-        const l2Result = await this.brotliCompressor.compress(data);
-        this.stats.compressed++;
-        this.stats.bytesSaved += l2Result.originalSize - l2Result.compressedSize;
-        return l2Result;
+        case 'L2':
+          // Brotli for cold/archive tier
+          const l2Result = await this.brotliCompressor.compress(data);
+          this.stats.compressed++;
+          this.stats.bytesSaved += l2Result.originalSize - l2Result.compressedSize;
+          return l2Result;
+      }
+    } catch (error) {
+      this.stats.operationsFailed++;
+      console.error(`[CompressionManager] Failed to compress for tier ${tier}:`, error);
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      return {
+        data: buffer,
+        originalSize: buffer.length,
+        compressedSize: buffer.length,
+        algorithm: 'none',
+        ratio: 1.0
+      };
     }
   }
 
@@ -270,17 +289,23 @@ export class CompressionManager {
   async decompress(data: Buffer, algorithm?: CompressionAlgorithm): Promise<string> {
     const detected = algorithm || this.gzipCompressor.detectAlgorithm(data);
     
-    if (detected === 'none') {
+    // If no algorithm provided and not Gzip, we might be dealing with Brotli
+    // but without a magic number we can't be sure unless explicitly told.
+    // However, for L2 compatibility where Brotli is default:
+    const finalAlgorithm = detected === 'none' && !algorithm ? 'none' : detected;
+
+    try {
+      const compressor = finalAlgorithm === 'brotli' 
+        ? this.brotliCompressor 
+        : this.gzipCompressor;
+
+      const result = await compressor.decompress(data, finalAlgorithm);
+      this.stats.decompressed++;
+      return result;
+    } catch (error) {
+      this.stats.operationsFailed++;
       return data.toString('utf-8');
     }
-
-    const compressor = detected === 'brotli' 
-      ? this.brotliCompressor 
-      : this.gzipCompressor;
-
-    const result = await compressor.decompress(data, detected);
-    this.stats.decompressed++;
-    return result;
   }
 
   /**
