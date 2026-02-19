@@ -237,10 +237,10 @@ export class BM25Index {
   private tokenize(text: string): string[] {
     if (!text) return [];
 
-    // Lowercase and split on non-alphanumeric
+    // Lowercase and split on non-alphanumeric (preserving common code symbols)
     const rawTerms = text
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/[^a-z0-9\s\+#_\$]/g, ' ')
       .split(/\s+/)
       .filter(term => 
         term.length >= (this.config.minTermLength || 2) &&
