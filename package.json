@@ -24,6 +24,9 @@
     "sql.js": "^1.10.3",
     "zod": "^4.3.6"
   },
+  "overrides": {
+    "minimatch": ">=10.2.1"
+  },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
