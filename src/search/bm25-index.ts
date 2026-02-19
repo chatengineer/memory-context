@@ -257,7 +257,7 @@ export class BM25Index {
   private stem(term: string): string {
     // Very simplified stemming - just remove common suffixes
     // For production, use a proper Porter stemmer library
-    const suffixes = ['ing', 'ly', 'ed', 'ies', 'es', 's', 'ment', 'ness', 'tion', 'ation'];
+    const suffixes = ['ation', 'tion', 'ment', 'ness', 'ing', 'ly', 'ed', 'ies', 'es', 's'];
     
     for (const suffix of suffixes) {
       if (term.length > suffix.length + 2 && term.endsWith(suffix)) {
