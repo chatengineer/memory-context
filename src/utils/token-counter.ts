@@ -42,6 +42,7 @@ export class TokenCounter {
     if (this.encoder && this.errorCount < this.maxErrors) {
       try {
         const tokens = this.encoder(text);
+        this.resetErrors();
         return tokens.length;
       } catch (e) {
         this.errorCount++;
@@ -59,7 +60,9 @@ export class TokenCounter {
   encode(text: string): number[] {
     if (this.encoder && this.errorCount < this.maxErrors) {
       try {
-        return this.encoder(text);
+        const tokens = this.encoder(text);
+        this.resetErrors();
+        return tokens;
       } catch (e) {
         this.errorCount++;
       }
@@ -74,7 +77,9 @@ export class TokenCounter {
   decode(tokens: number[]): string {
     if (this.errorCount < this.maxErrors) {
       try {
-        return decode(tokens);
+        const result = decode(tokens);
+        this.resetErrors();
+        return result;
       } catch (e) {
         this.errorCount++;
         return '[decode failed]';
