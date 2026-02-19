@@ -5,7 +5,9 @@
 export {
   computeRelevanceScore,
   AdvancedRelevanceScorer,
-  advancedRelevanceScorer,
+  advancedRelevanceScorer
+} from './advanced-relevance';
+export type {
   RelevanceConfig,
   ScoringContext,
   RelevanceResult
