@@ -188,7 +188,7 @@ export class TieredStorage {
 
         this.initialized = true;
       });
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Failed to initialize SQLite', error, { component: 'TieredStorage' });
       // Continue with L0-only mode
       this.initialized = true;
@@ -296,7 +296,7 @@ export class TieredStorage {
         );
         // Clear compression metadata after decompression
         message.compression = undefined;
-      } catch (error) {
+      } catch (error: any) {
         defaultLogger.error(`Failed to decompress message ${message.id}`, error, { component: 'TieredStorage' });
       }
     }
@@ -322,7 +322,7 @@ export class TieredStorage {
             messages.push(this.rowToMessage(row));
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.warn('[TieredStorage] Error querying L1:', error);
       }
     }
@@ -450,7 +450,7 @@ export class TieredStorage {
       message.tier = 'L1';
       this.stats.demotions++;
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TieredStorage] Error demoting to L1:', error);
       // If L1 fails, try L2
       await this.demoteToL2(message);
@@ -526,7 +526,7 @@ export class TieredStorage {
       if (results.length > 0 && results[0].values && results[0].values.length > 0) {
         return this.rowToMessage(results[0].values[0]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn('[TieredStorage] Error querying L1:', error);
     }
 
@@ -593,7 +593,7 @@ export class TieredStorage {
           try {
             await this.demoteToL1(item.message);
             item.resolve();
-          } catch (error) {
+          } catch (error: any) {
             item.reject(error);
           }
         }

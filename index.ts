@@ -7,10 +7,12 @@
  * Uses Factory pattern for async initialization (Critical Issue #3)
  */
 
+import { defaultLogger } from './src/observability/metrics';
+
 // Activation hook for OpenClaw plugin system
 // OpenClaw calls this to get a plugin instance
 export function activate(context?: any): { dispose: () => void } {
-  console.log('[memory-context] Activating plugin...');
+  defaultLogger.info('Activating plugin...', { component: 'memory-context' });
   
   // Import at activation time to avoid load-time errors
   const { MemoryContextPlugin } = require('./src/index');
@@ -20,14 +22,16 @@ export function activate(context?: any): { dispose: () => void } {
   
   // Initialize asynchronously (don't block activation)
   plugin.onLoad().catch((err: any) => {
-    console.error('[memory-context] Activation error:', err);
+    defaultLogger.error('Activation error', err, { component: 'memory-context' });
   });
   
   // Return OpenClaw-compatible interface
   return {
     dispose: () => {
-      console.log('[memory-context] Disposing plugin...');
-      plugin.onUnload().catch(console.error);
+      defaultLogger.info('Disposing plugin...', { component: 'memory-context' });
+      plugin.onUnload().catch((err: any) => {
+        defaultLogger.error('Disposal error', err, { component: 'memory-context' });
+      });
     }
   };
 }
@@ -71,13 +75,22 @@ export const FullHistory = lazyRequire('./src/persistence/full-history', 'FullHi
 export const TieredStorage = lazyRequire('./src/persistence/tiered-storage', 'TieredStorage');
 
 function lazyRequire(modulePath: string, exportName: string) {
+  let cachedModule: any = null;
+  
+  const getModule = () => {
+    if (!cachedModule) {
+      cachedModule = require(modulePath);
+    }
+    return cachedModule;
+  };
+
   return new Proxy(function() {}, {
     construct(_target: any, args: any[]) {
-      const mod = require(modulePath);
+      const mod = getModule();
       return new mod[exportName](...args);
     },
     get(_target: any, prop: string | symbol) {
-      const mod = require(modulePath);
+      const mod = getModule();
       return mod[exportName][prop];
     }
   });

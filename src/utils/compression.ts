@@ -131,7 +131,7 @@ export class Compressor {
         algorithm,
         ratio: compressed.length / originalSize
       };
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Compression error', error as any, { component: 'Compressor' });
       return {
         data: buffer,
@@ -169,7 +169,7 @@ export class Compressor {
       }
 
       return decompressed.toString('utf-8');
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Decompression error', error as any, { component: 'Compressor' });
       // If we failed to decompress what we thought was a compressed stream,
       // it might be raw data or corrupted.
@@ -270,7 +270,7 @@ export class CompressionManager {
           this.stats.bytesSaved += l2Result.originalSize - l2Result.compressedSize;
           return l2Result;
       }
-    } catch (error) {
+    } catch (error: any) {
       this.stats.operationsFailed++;
       defaultLogger.error(`Failed to compress for tier ${tier}`, error as any, { component: 'CompressionManager' });
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -303,7 +303,7 @@ export class CompressionManager {
       const result = await compressor.decompress(data, finalAlgorithm);
       this.stats.decompressed++;
       return result;
-    } catch (error) {
+    } catch (error: any) {
       this.stats.operationsFailed++;
       return data.toString('utf-8');
     }

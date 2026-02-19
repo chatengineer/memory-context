@@ -106,7 +106,7 @@ export class FullHistory {
         });
         return id;
       });
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Error storing message', error as any, { component: 'FullHistory' });
       // Fallback: store in pending buffer
       this.bufferMessage(message);
@@ -131,7 +131,7 @@ export class FullHistory {
           ...sm.metadata
         }));
       });
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Error retrieving messages', error as any, { component: 'FullHistory' });
       return [...this.pendingMessages];
     }
@@ -155,7 +155,7 @@ export class FullHistory {
         timestamp: stored.timestamp,
         ...stored.metadata
       };
-    } catch (error) {
+    } catch (error: any) {
       defaultLogger.error('Error retrieving message', error as any, { component: 'FullHistory' });
       return null;
     }
