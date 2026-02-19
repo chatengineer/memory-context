@@ -70,6 +70,7 @@ export class BM25Index {
   private documents: Map<string, Document> = new Map();
   private termIndex: Map<string, TermInfo> = new Map();
   private docLengths: Map<string, number> = new Map();
+  private docToTerms: Map<string, Set<string>> = new Map(); // docId -> unique terms
   private avgdl: number = 0;
   private totalDocs: number = 0;
   private totalTerms: number = 0;
@@ -100,6 +101,7 @@ export class BM25Index {
     // Update document store
     this.documents.set(doc.id, doc);
     this.docLengths.set(doc.id, terms.length);
+    this.docToTerms.set(doc.id, new Set(termFreqs.keys()));
 
     // Update term index
     for (const [term, freq] of termFreqs) {
@@ -279,10 +281,15 @@ export class BM25Index {
 
   /**
    * Remove term frequencies for a document (internal)
+   * Optimization: Uses docToTerms mapping for O(DocTerms) complexity
    */
   private removeDocumentTerms(docId: string): void {
-    for (const [term, termInfo] of this.termIndex) {
-      if (termInfo.postings.has(docId)) {
+    const docTerms = this.docToTerms.get(docId);
+    if (!docTerms) return;
+
+    for (const term of docTerms) {
+      const termInfo = this.termIndex.get(term);
+      if (termInfo) {
         termInfo.postings.delete(docId);
         termInfo.docFreq--;
         
@@ -292,6 +299,8 @@ export class BM25Index {
         }
       }
     }
+    
+    this.docToTerms.delete(docId);
   }
 
   /**
@@ -318,6 +327,7 @@ export class BM25Index {
     this.documents.clear();
     this.termIndex.clear();
     this.docLengths.clear();
+    this.docToTerms.clear();
     this.totalDocs = 0;
     this.totalTerms = 0;
     this.avgdl = 0;
@@ -330,6 +340,7 @@ export class BM25Index {
     documents: [string, Document][];
     termIndex: [string, { docFreq: number; postings: [string, number][] }][];
     docLengths: [string, number][];
+    docToTerms: [string, string[]][];
     avgdl: number;
     totalDocs: number;
     totalTerms: number;
@@ -344,6 +355,7 @@ export class BM25Index {
         }
       ]),
       docLengths: Array.from(this.docLengths.entries()),
+      docToTerms: Array.from(this.docToTerms.entries()).map(([id, terms]) => [id, Array.from(terms)]),
       avgdl: this.avgdl,
       totalDocs: this.totalDocs,
       totalTerms: this.totalTerms
@@ -358,6 +370,7 @@ export class BM25Index {
     
     this.documents = new Map(data.documents);
     this.docLengths = new Map(data.docLengths);
+    this.docToTerms = new Map(data.docToTerms.map(([id, terms]) => [id, new Set(terms)]));
     this.avgdl = data.avgdl;
     this.totalDocs = data.totalDocs;
     this.totalTerms = data.totalTerms;
