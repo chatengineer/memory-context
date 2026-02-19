@@ -17,6 +17,7 @@ import { FullHistory, fullHistory } from '../persistence/full-history';
 import { TieredStorage, tieredStorage } from '../persistence/tiered-storage';
 import { computeRelevanceScore } from '../heuristics/relevance';
 import { contextBuildBreaker } from '../utils/circuit-breaker';
+import { defaultLogger } from '../observability/metrics';
 
 export interface MemoryContextConfig {
   maxContextTokens: number;
@@ -105,7 +106,7 @@ export class MemoryContextFactory {
   }
 
   private async doInitialize(): Promise<void> {
-    console.log('[MemoryContextFactory] Initializing components...');
+    defaultLogger.info('Initializing components...', { component: 'MemoryContextFactory' });
     
     // 1. Initialize tiered storage (async)
     if (this.config.persistenceEnabled) {
@@ -139,7 +140,7 @@ export class MemoryContextFactory {
       this._engine.enableZeroShiftMode();
     }
     
-    console.log('[MemoryContextFactory] Initialization complete');
+    defaultLogger.info('Initialization complete', { component: 'MemoryContextFactory' });
   }
 
   /**

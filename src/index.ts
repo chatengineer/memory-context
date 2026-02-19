@@ -13,6 +13,7 @@ import { ShiftImmunity } from "./core/shift-immunity";
 import { BudgetManager } from "./core/budget-manager";
 import { computeRelevanceScore } from "./heuristics/relevance";
 import { FullHistory } from "./persistence/full-history";
+import { defaultLogger } from "./observability/metrics";
 
 /**
  * MemoryContextPlugin – registers with OpenClaw and manages context lifecycle.
@@ -43,10 +44,10 @@ export class MemoryContextPlugin {
   }
 
   private async doInitialize(): Promise<void> {
-    console.log("[memory-context] Initializing plugin...");
+    defaultLogger.info("Initializing plugin...", { component: "memory-context" });
     await this.factory.initialize();
     this.initialized = true;
-    console.log("[memory-context] Plugin initialized successfully");
+    defaultLogger.info("Plugin initialized successfully", { component: "memory-context" });
   }
 
   /** Called when the plugin is loaded by OpenClaw */
@@ -55,12 +56,12 @@ export class MemoryContextPlugin {
     const engine = this.factory.getEngine();
     // No compaction – ensure JIT always rebuilds from full source
     engine.enableZeroShiftMode();
-    console.log("[memory-context] Plugin loaded – zero-shift mode enabled");
+    defaultLogger.info("Plugin loaded – zero-shift mode enabled", { component: "memory-context" });
   }
 
   /** Called when the plugin is unloaded */
   async onUnload(): Promise<void> {
-    console.log("[memory-context] Plugin unloaded – cleaning up");
+    defaultLogger.info("Plugin unloaded – cleaning up", { component: "memory-context" });
     await this.factory.reset();
     this.initialized = false;
   }
@@ -85,12 +86,12 @@ export class MemoryContextPlugin {
     // Rebuild context for the next model call
     await engine.buildContext(message);
     
-    console.log("[memory-context] Rebuilt context for next model call");
+    defaultLogger.info("Rebuilt context for next model call", { component: "memory-context" });
   }
 
   /** Called when the underlying model switches (e.g., Gemini to Claude) */
   async onModelSwitch(oldModel: string, newModel: string): Promise<void> {
-    console.log(`[memory-context] Model switch from ${oldModel} → ${newModel}`);
+    defaultLogger.info(`Model switch from ${oldModel} → ${newModel}`, { component: "memory-context" });
     
     if (!this.initialized) {
       await this.initialize();

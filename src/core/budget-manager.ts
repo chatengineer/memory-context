@@ -3,6 +3,7 @@
 // Fixed: Now uses proper tokenizer instead of naive whitespace splitting
 
 import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
+import { defaultLogger } from '../observability/metrics';
 
 /**
  * Target utilization of the token window. 1.0 means fill the window completely.
@@ -105,7 +106,7 @@ export class BudgetManager {
     
     // Safety check: if we're still over budget, truncate more
     if (actualCount > limit) {
-      console.warn(`[BudgetManager] Budget exceeded: ${actualCount} > ${limit}, trimming`);
+      defaultLogger.warn(`Budget exceeded: ${actualCount} > ${limit}, trimming`, { component: 'BudgetManager' });
       const { text: trimmedText, actualTokens } = this.tokenCounter.truncate(
         totalText,
         limit

@@ -4,7 +4,7 @@
 
 import { TieredStorage, StoredMessage, tieredStorage } from './tiered-storage';
 import { storageBreaker } from '../utils/circuit-breaker';
-import { metricsRegistry } from '../observability/metrics';
+import { metricsRegistry, defaultLogger } from '../observability/metrics';
 import { Metadata } from '../types';
 
 /**
@@ -48,7 +48,7 @@ export class FullHistory {
     // Enforce limit (FIFO)
     if (this.pendingMessages.length > MAX_PENDING_MESSAGES) {
       this.pendingMessages.shift();
-      console.warn(`[FullHistory] Pending message buffer overflow (> ${MAX_PENDING_MESSAGES}). Dropped oldest message.`);
+      defaultLogger.warn(`Pending message buffer overflow (> ${MAX_PENDING_MESSAGES}). Dropped oldest message.`, { component: 'FullHistory' });
     }
   }
 
@@ -107,7 +107,7 @@ export class FullHistory {
         return id;
       });
     } catch (error) {
-      console.error('[FullHistory] Error storing message:', error);
+      defaultLogger.error('Error storing message', error as any, { component: 'FullHistory' });
       // Fallback: store in pending buffer
       this.bufferMessage(message);
       return `fallback_${Date.now()}`;
@@ -132,7 +132,7 @@ export class FullHistory {
         }));
       });
     } catch (error) {
-      console.error('[FullHistory] Error retrieving messages:', error);
+      defaultLogger.error('Error retrieving messages', error as any, { component: 'FullHistory' });
       return [...this.pendingMessages];
     }
   }
@@ -156,7 +156,7 @@ export class FullHistory {
         ...stored.metadata
       };
     } catch (error) {
-      console.error('[FullHistory] Error retrieving message:', error);
+      defaultLogger.error('Error retrieving message', error as any, { component: 'FullHistory' });
       return null;
     }
   }

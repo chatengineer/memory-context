@@ -2,6 +2,8 @@
 // Provides shift‑immune anchors that survive model switches and context rebuilds.
 // Quantum anchors are unbreakable continuity markers.
 
+import { defaultLogger } from '../observability/metrics';
+
 /**
  * ShiftImmunity – manages a set of "quantum anchors" that are always injected
  * into the rebuilt context, guaranteeing continuity across model switches.
@@ -30,6 +32,6 @@ export class ShiftImmunity {
   preserveAnchors(): void {
     // In a real implementation we might serialize/deserialize anchors.
     // Here we simply ensure the set remains unchanged.
-    console.log("[ShiftImmunity] Preserving anchors across model switch");
+    defaultLogger.info('Preserving anchors across model switch', { component: 'ShiftImmunity' });
   }
 }

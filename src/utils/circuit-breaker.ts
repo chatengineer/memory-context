@@ -3,6 +3,8 @@
  * Prevents cascading failures by stopping operations after repeated errors
  */
 
+import { defaultLogger } from '../observability/metrics';
+
 export enum CircuitState {
   CLOSED = 'closed',     // Normal operation
   OPEN = 'open',        // Failing fast, rejecting requests
@@ -83,7 +85,7 @@ export class CircuitBreaker {
       if (timeSinceFailure >= this.config.timeout) {
         this.state = CircuitState.HALF_OPEN;
         this.halfOpenCount = 0;
-        console.log(`[CircuitBreaker:${this.name}] Transitioning to HALF_OPEN`);
+        defaultLogger.info('Transitioning to HALF_OPEN', { component: `CircuitBreaker:${this.name}` });
       }
     }
   }
@@ -93,7 +95,7 @@ export class CircuitBreaker {
       this.successes++;
       if (this.successes >= this.config.successThreshold) {
         this.reset();
-        console.log(`[CircuitBreaker:${this.name}] Circuit CLOSED (recovered)`);
+        defaultLogger.info('Circuit CLOSED (recovered)', { component: `CircuitBreaker:${this.name}` });
       }
     } else {
       this.failures = Math.max(0, this.failures - 1);
@@ -107,10 +109,10 @@ export class CircuitBreaker {
     if (this.state === CircuitState.HALF_OPEN) {
       this.state = CircuitState.OPEN;
       this.failures = this.config.failureThreshold;
-      console.warn(`[CircuitBreaker:${this.name}] Transitioning to OPEN (failure in half-open)`);
+      defaultLogger.warn('Transitioning to OPEN (failure in half-open)', { component: `CircuitBreaker:${this.name}` });
     } else if (this.failures >= this.config.failureThreshold) {
       this.state = CircuitState.OPEN;
-      console.warn(`[CircuitBreaker:${this.name}] Circuit OPEN (${this.failures} failures)`);
+      defaultLogger.warn(`Circuit OPEN (${this.failures} failures)`, { component: `CircuitBreaker:${this.name}` });
     }
   }
   

@@ -14,6 +14,7 @@ import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
 import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
 import { generateSecureId } from '../utils/security';
 import { CompressionManager, compressionManager, CompressionAlgorithm } from '../utils/compression';
+import { defaultLogger } from '../observability/metrics';
 import type { Database, SqlJsStatic } from 'sql.js';
 
 // Queue item for async demotion processing
@@ -188,7 +189,7 @@ export class TieredStorage {
         this.initialized = true;
       });
     } catch (error) {
-      console.error('[TieredStorage] Failed to initialize SQLite:', error);
+      defaultLogger.error('Failed to initialize SQLite', error, { component: 'TieredStorage' });
       // Continue with L0-only mode
       this.initialized = true;
     }
@@ -296,7 +297,7 @@ export class TieredStorage {
         // Clear compression metadata after decompression
         message.compression = undefined;
       } catch (error) {
-        console.error(`[TieredStorage] Failed to decompress message ${message.id}:`, error);
+        defaultLogger.error(`Failed to decompress message ${message.id}`, error, { component: 'TieredStorage' });
       }
     }
   }

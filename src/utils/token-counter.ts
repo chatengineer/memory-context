@@ -6,6 +6,7 @@
  */
 
 import { encode, decode } from 'gpt-tokenizer/model/gpt-4o';
+import { defaultLogger } from '../observability/metrics';
 
 export enum TokenizerModel {
   GPT4 = 'gpt-4',
@@ -26,7 +27,7 @@ export class TokenCounter {
     try {
       this.encoder = encode;
     } catch (e) {
-      console.warn('[TokenCounter] gpt-tokenizer unavailable, using estimation');
+      defaultLogger.warn('gpt-tokenizer unavailable, using estimation', { component: 'TokenCounter' });
       this.encoder = null;
     }
   }
@@ -46,7 +47,7 @@ export class TokenCounter {
         return tokens.length;
       } catch (e) {
         this.errorCount++;
-        console.warn(`[TokenCounter] Tokenizer error ${this.errorCount}/${this.maxErrors}, falling back`);
+        defaultLogger.warn(`Tokenizer error ${this.errorCount}/${this.maxErrors}, falling back`, { component: 'TokenCounter', error: e });
       }
     }
     

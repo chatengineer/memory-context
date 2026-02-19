@@ -10,6 +10,8 @@
  * - Automatic recovery detection
  */
 
+import { defaultLogger } from '../observability/metrics';
+
 export enum FallbackLevel {
   FULL = 'full',         // All features available
   DEGRADED = 'degraded', // Reduced features
@@ -211,7 +213,7 @@ export class FallbackManager {
       failureCount: this.failureCount
     };
 
-    console.warn(`[FallbackManager] Activated ${level} mode: ${reason}`);
+    defaultLogger.warn(`Activated ${level} mode: ${reason}`, { component: 'FallbackManager' });
 
     if (this.config.autoRecovery) {
       this.startRecoveryTimer();
@@ -224,7 +226,7 @@ export class FallbackManager {
   deactivateFallback(): void {
     if (!this.state.active) return;
 
-    console.log('[FallbackManager] Returning to full mode');
+    defaultLogger.info('Returning to full mode', { component: 'FallbackManager' });
 
     this.state = {
       level: FallbackLevel.FULL,

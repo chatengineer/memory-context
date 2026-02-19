@@ -12,6 +12,7 @@
 
 import * as zlib from 'zlib';
 import { promisify } from 'util';
+import { defaultLogger } from '../observability/metrics';
 
 // Promisify zlib methods
 const gzip = promisify(zlib.gzip);
@@ -131,7 +132,7 @@ export class Compressor {
         ratio: compressed.length / originalSize
       };
     } catch (error) {
-      console.error('[Compressor] Compression error:', error);
+      defaultLogger.error('Compression error', error as any, { component: 'Compressor' });
       return {
         data: buffer,
         originalSize,
@@ -169,7 +170,7 @@ export class Compressor {
 
       return decompressed.toString('utf-8');
     } catch (error) {
-      console.error('[Compressor] Decompression error:', error);
+      defaultLogger.error('Decompression error', error as any, { component: 'Compressor' });
       // If we failed to decompress what we thought was a compressed stream,
       // it might be raw data or corrupted.
       return data.toString('utf-8');
@@ -271,7 +272,7 @@ export class CompressionManager {
       }
     } catch (error) {
       this.stats.operationsFailed++;
-      console.error(`[CompressionManager] Failed to compress for tier ${tier}:`, error);
+      defaultLogger.error(`Failed to compress for tier ${tier}`, error as any, { component: 'CompressionManager' });
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       return {
         data: buffer,

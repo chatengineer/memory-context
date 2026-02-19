@@ -425,5 +425,10 @@ export class MemoryContextMetrics {
 
 // Export singleton instances
 export const metricsRegistry = new MetricsRegistry();
-export const structuredLogger = new StructuredLogger();
-export const memoryContextMetrics = new MemoryContextMetrics(metricsRegistry, structuredLogger);
+export const defaultLogger = new StructuredLogger();
+// Set log level from environment variable
+const envLogLevel = process.env.LOG_LEVEL?.toLowerCase();
+if (envLogLevel && ['debug', 'info', 'warn', 'error'].includes(envLogLevel)) {
+  defaultLogger.setLevel(envLogLevel as LogLevel);
+}
+export const memoryContextMetrics = new MemoryContextMetrics(metricsRegistry, defaultLogger);
