@@ -321,6 +321,44 @@ export class BM25Index {
   }
 
   /**
+   * Calculate score for a standalone piece of content without adding it to the index
+   * Optimization: Avoids index write overhead for temporary scoring
+   */
+  scoreStandalone(content: string, query: string): { score: number; matchedTerms: string[] } {
+    const queryTerms = this.tokenize(query);
+    if (queryTerms.length === 0) return { score: 0, matchedTerms: [] };
+
+    const docTerms = this.tokenize(content);
+    const docLength = docTerms.length;
+    const termFreqs = this.countTerms(docTerms);
+
+    let score = 0;
+    const matchedTerms: string[] = [];
+
+    for (const term of queryTerms) {
+      const freq = termFreqs.get(term);
+      if (!freq) continue;
+
+      matchedTerms.push(term);
+
+      // Use index stats if available, otherwise fallback to N=1
+      const termInfo = this.termIndex.get(term);
+      const idf = termInfo 
+        ? this.calculateIDF(termInfo.docFreq)
+        : Math.log((1 - 1 + 0.5) / (1 + 0.5) + 1); // Fallback IDF
+
+      const numerator = freq * (this.config.k1 + 1);
+      const denominator = freq + this.config.k1 * (
+        1 - this.config.b + this.config.b * (docLength / (this.avgdl || docLength || 1))
+      );
+
+      score += idf * (numerator / denominator);
+    }
+
+    return { score, matchedTerms };
+  }
+
+  /**
    * Clear the entire index
    */
   clear(): void {

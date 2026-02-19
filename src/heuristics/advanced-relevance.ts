@@ -64,6 +64,7 @@ export interface ScoringContext {
   currentContext?: string[];
   referenceTime?: number;
   bm25Index?: BM25Index;
+  _keywordScore?: number; // Internal: pre-calculated BM25 score
 }
 
 export interface RelevanceResult {
@@ -137,6 +138,11 @@ export class AdvancedRelevanceScorer {
    * Compute BM25 keyword relevance score
    */
   private computeKeywordScore(content: string, context?: ScoringContext): number {
+    // Use pre-calculated score if available (Batch Optimization)
+    if (context?._keywordScore !== undefined) {
+      return Math.min(context._keywordScore / 10, 1.0);
+    }
+
     if (!context?.query) {
       // No query - use term frequency as proxy
       const terms = content.toLowerCase().split(/\s+/);
@@ -145,15 +151,45 @@ export class AdvancedRelevanceScorer {
     }
 
     // Use BM25 for keyword matching
-    const docId = `temp_${Date.now()}`;
-    this.bm25Index.addDocument({ id: docId, content });
-    const results = this.bm25Index.search(context.query, 1);
-    this.bm25Index.removeDocument(docId);
-
-    if (results.length === 0) return 0;
+    const results = this.bm25Index.scoreStandalone(content, context.query);
 
     // Normalize BM25 score (typically 0-30)
-    return Math.min(results[0].score / 10, 1.0);
+    return Math.min(results.score / 10, 1.0);
+  }
+
+  /**
+   * Compute scores for a batch of contents against a query
+   * Optimization: Avoids redundant indexing operations
+   */
+  computeBatchScores(
+    candidates: { content: string; metadata?: Metadata }[],
+    context: ScoringContext
+  ): number[] {
+    if (!context.query || !context.bm25Index) {
+      return candidates.map(c => this.computeScore(c.content, c.metadata, context).score);
+    }
+
+    // 1. Perform a single search on the pre-populated index
+    const searchResults = context.bm25Index.search(context.query, candidates.length * 2);
+    const scoreMap = new Map<string, number>();
+    for (const res of searchResults) {
+      scoreMap.set(res.id, res.score);
+    }
+
+    // 2. Map candidates to scores
+    return candidates.map(c => {
+      // If we have an ID and it's in the index, use that score
+      if (c.metadata?.id && scoreMap.has(c.metadata.id)) {
+        return this.computeScore(c.content, c.metadata, {
+          ...context,
+          // Inject the specific keyword score to avoid re-calculating
+          _keywordScore: scoreMap.get(c.metadata.id)
+        }).score;
+      }
+
+      // Fallback for items not in index (e.g., hierarchy layers)
+      return this.computeScore(c.content, c.metadata, context).score;
+    });
   }
 
   /**
