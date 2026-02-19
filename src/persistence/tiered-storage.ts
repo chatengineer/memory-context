@@ -1,11 +1,11 @@
 /**
  * Tiered Storage System - Implements bounded memory with eviction
- * 
+ *
  * Architecture:
  * - L0 (Hot): In-memory LRU cache for frequently accessed items
  * - L1 (Warm): SQLite (sql.js) for searchable persisted data
  * - L2 (Cold): Compressed archive for long-term storage
- * 
+ *
  * Each tier has configurable size limits and automatic promotion/demotion.
  */
 
@@ -14,6 +14,38 @@ import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
 import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
 import { generateSecureId } from '../utils/security';
 import type { Database, SqlJsStatic } from 'sql.js';
+
+// Queue item for async demotion processing
+interface DemotionQueueItem {
+  message: StoredMessage;
+  resolve: () => void;
+  reject: (error: any) => void;
+}
+
+// Simple async mutex for sequential operations
+class AsyncMutex {
+  private locked = false;
+  private queue: Array<() => void> = [];
+
+  async acquire(): Promise<() => void> {
+    if (!this.locked) {
+      this.locked = true;
+      return () => this.release();
+    }
+    return new Promise<() => void>((resolve) => {
+      this.queue.push(() => resolve(() => this.release()));
+    });
+  }
+
+  private release() {
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
 
 // Initialize sql.js lazily
 let SQL: SqlJsStatic | null = null;
@@ -35,7 +67,7 @@ export interface StorageTier {
 
 export interface TieredStorageConfig {
   l0MaxTokens: number;      // L0 (hot) - LRU cache limit
-  l1MaxTokens: number;      // L1 (warm) - SQLite limit  
+  l1MaxTokens: number;      // L1 (warm) - SQLite limit
   l2MaxTokens: number;      // L2 (cold) - Archive limit
   l2Compress: boolean;      // Whether to compress L2 data
   evictionPolicy: 'lru' | 'lfu' | 'fifo';
@@ -67,19 +99,23 @@ const DEFAULT_CONFIG: TieredStorageConfig = {
 export class TieredStorage {
   // L0: Hot tier - LRU cache for immediate access
   private l0Cache: LRUCache<string, StoredMessage>;
-  
+
   // L1: Warm tier - SQLite for searchable persistence
   private l1Db: Database | null = null;
   private l1Tokens: number = 0;
-  
+
   // L2: Cold tier - Compressed archive (in-memory for now, can be file-based)
   private l2Archive: Map<string, StoredMessage> = new Map();
   private l2Tokens: number = 0;
-  
+
   private config: TieredStorageConfig;
   private tokenCounter: TokenCounter;
   private initialized: boolean = false;
-  
+
+  // Async demotion queue - items evicted from L0 that need to be demoted to L1
+  private demotionMutex = new AsyncMutex();
+  private demotionQueue: { message: StoredMessage; resolve: () => void; reject: (err: any) => void }[] = [];
+
   // Statistics
   private stats = {
     l0Hits: 0,
@@ -96,7 +132,7 @@ export class TieredStorage {
   constructor(config?: Partial<TieredStorageConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.tokenCounter = defaultTokenCounter;
-    
+
     // Initialize L0 LRU cache
     this.l0Cache = new LRUCache<string, StoredMessage>({
       maxSize: this.config.l0MaxTokens,
@@ -105,7 +141,9 @@ export class TieredStorage {
       updateAgeOnGet: true,
       dispose: (value: StoredMessage, key: string, reason: string) => {
         if (reason === 'evict') {
-          this.demoteToL1(value);
+          // Buffer evicted items to prevent data loss
+          // Async demotion happens synchronously in store() before accepting new items
+          this.bufferEvictedForDemotion(value);
         }
       }
     });
@@ -116,12 +154,12 @@ export class TieredStorage {
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    
+
     try {
       await storageBreaker.execute(async () => {
         const SQL = await getSqlJs();
         this.l1Db = new SQL.Database();
-        
+
         // Create tables for L1 storage
         this.l1Db.run(`
           CREATE TABLE IF NOT EXISTS messages (
@@ -134,12 +172,12 @@ export class TieredStorage {
             metadata TEXT
           )
         `);
-        
+
         // Create indices for efficient queries
         this.l1Db.run(`CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp)`);
         this.l1Db.run(`CREATE INDEX IF NOT EXISTS idx_access ON messages(last_access)`);
         this.l1Db.run(`CREATE INDEX IF NOT EXISTS idx_tokens ON messages(token_count)`);
-        
+
         this.initialized = true;
       });
     } catch (error) {
@@ -151,11 +189,14 @@ export class TieredStorage {
 
   /**
    * Store a message with automatic tier placement
+   * 
+   * CRITICAL: Handles explicit demotion BEFORE calling l0Cache.set()
+   * to prevent race conditions with LRUCache's sync dispose callback.
    */
   async store(content: string, metadata?: Record<string, any>): Promise<string> {
     const id = this.generateId();
     const tokenCount = this.tokenCounter.count(content);
-    
+
     const message: StoredMessage = {
       id,
       content,
@@ -166,13 +207,22 @@ export class TieredStorage {
       lastAccess: Date.now(),
       metadata
     };
-    
-    // Check if we need to make room in L0
-    await this.ensureCapacity('L0', tokenCount);
-    
-    // Store in L0 (hot tier)
+
+    // STEP 1: Check if we need to manually demote items to make room
+    // This prevents the LRU dispose callback from racing with our operations
+    const l0CurrentSize = this.getL0TokenCount();
+    if (l0CurrentSize + tokenCount > this.config.l0MaxTokens) {
+      // Calculate how much space we need
+      const spaceNeeded = (l0CurrentSize + tokenCount) - this.config.l0MaxTokens;
+      await this.proactivelyDemoteFromL0(spaceNeeded);
+    }
+
+    // STEP 2: Process any buffered evictions from previous operations (e.g. from internal LRU TTL)
+    await this.processBufferedDemotions();
+
+    // STEP 3: Store in L0 (hot tier)
     this.l0Cache.set(id, message);
-    
+
     return id;
   }
 
@@ -189,7 +239,7 @@ export class TieredStorage {
       return l0Message;
     }
     this.stats.l0Misses++;
-    
+
     // Check L1 (warm)
     if (this.l1Db) {
       const result = await this.queryL1(id);
@@ -201,7 +251,7 @@ export class TieredStorage {
       }
     }
     this.stats.l1Misses++;
-    
+
     // Check L2 (cold)
     const l2Message = this.l2Archive.get(id);
     if (l2Message) {
@@ -211,7 +261,7 @@ export class TieredStorage {
       return l2Message;
     }
     this.stats.l2Misses++;
-    
+
     return null;
   }
 
@@ -220,12 +270,12 @@ export class TieredStorage {
    */
   async getAllMessages(): Promise<StoredMessage[]> {
     const messages: StoredMessage[] = [];
-    
+
     // Collect from L0
     for (const message of this.l0Cache.values()) {
       messages.push(message);
     }
-    
+
     // Collect from L1
     if (this.l1Db) {
       try {
@@ -239,15 +289,15 @@ export class TieredStorage {
         console.warn('[TieredStorage] Error querying L1:', error);
       }
     }
-    
+
     // Collect from L2
     for (const message of this.l2Archive.values()) {
       messages.push(message);
     }
-    
+
     // Sort by timestamp (oldest first for context building)
     messages.sort((a, b) => a.timestamp - b.timestamp);
-    
+
     return messages;
   }
 
@@ -269,7 +319,7 @@ export class TieredStorage {
    */
   getTierStats(): { L0: StorageTier; L1: StorageTier; L2: StorageTier } {
     const l0Tokens = Array.from(this.l0Cache.values()).reduce((sum, m) => sum + m.tokenCount, 0);
-    
+
     return {
       L0: {
         name: 'L0 (Hot)',
@@ -300,15 +350,15 @@ export class TieredStorage {
    */
   async clear(): Promise<void> {
     this.l0Cache.clear();
-    
+
     if (this.l1Db) {
       this.l1Db.run('DELETE FROM messages');
       this.l1Tokens = 0;
     }
-    
+
     this.l2Archive.clear();
     this.l2Tokens = 0;
-    
+
     // Reset stats
     this.stats = {
       l0Hits: 0, l0Misses: 0,
@@ -326,12 +376,12 @@ export class TieredStorage {
 
   private async ensureCapacity(tier: 'L0' | 'L1' | 'L2', neededTokens: number): Promise<void> {
     // L0 capacity is handled by LRU cache automatically
-    
+
     // For L1 and L2, we need to manually evict
     if (tier === 'L1' && this.l1Tokens + neededTokens > this.config.l1MaxTokens) {
       await this.evictFromL1(neededTokens);
     }
-    
+
     if (tier === 'L2' && this.l2Tokens + neededTokens > this.config.l2MaxTokens) {
       await this.evictFromL2(neededTokens);
     }
@@ -339,10 +389,10 @@ export class TieredStorage {
 
   private async demoteToL1(message: StoredMessage): Promise<void> {
     if (!this.l1Db) return;
-    
+
     try {
       await this.ensureCapacity('L1', message.tokenCount);
-      
+
       this.l1Db.run(
         `INSERT OR REPLACE INTO messages (id, content, token_count, timestamp, access_count, last_access, metadata)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -356,11 +406,11 @@ export class TieredStorage {
           JSON.stringify(message.metadata || {})
         ]
       );
-      
+
       this.l1Tokens += message.tokenCount;
       message.tier = 'L1';
       this.stats.demotions++;
-      
+
     } catch (error) {
       console.error('[TieredStorage] Error demoting to L1:', error);
       // If L1 fails, try L2
@@ -370,18 +420,23 @@ export class TieredStorage {
 
   private async demoteToL2(message: StoredMessage): Promise<void> {
     await this.ensureCapacity('L2', message.tokenCount);
-    
+
     // For L2, we could compress the content
     // For now, just store as-is
     this.l2Archive.set(message.id, message);
     this.l2Tokens += message.tokenCount;
+    
+    // Decrement L1 tokens if it was previously in L1
+    if (message.tier === 'L1') {
+      this.l1Tokens -= message.tokenCount;
+      // Remove from L1 DB
+      if (this.l1Db) {
+        this.l1Db.run('DELETE FROM messages WHERE id = ?', [message.id]);
+      }
+    }
+    
     message.tier = 'L2';
     this.stats.demotions++;
-    
-    // Remove from L1 if it was there
-    if (this.l1Db) {
-      this.l1Db.run('DELETE FROM messages WHERE id = ?', [message.id]);
-    }
   }
 
   private async promoteToL0(message: StoredMessage): Promise<void> {
@@ -393,11 +448,21 @@ export class TieredStorage {
       this.l2Archive.delete(message.id);
       this.l2Tokens -= message.tokenCount;
     }
-    
+
     message.tier = 'L0';
     message.accessCount++;
     message.lastAccess = Date.now();
+
+    // Check capacity before promoting to L0
+    const l0CurrentSize = this.getL0TokenCount();
+    if (l0CurrentSize + message.tokenCount > this.config.l0MaxTokens) {
+      const spaceNeeded = (l0CurrentSize + message.tokenCount) - this.config.l0MaxTokens;
+      await this.proactivelyDemoteFromL0(spaceNeeded);
+    }
     
+    // Process any buffered evictions
+    await this.processBufferedDemotions();
+
     // LRU cache will handle eviction
     this.l0Cache.set(message.id, message);
     this.stats.promotions++;
@@ -405,7 +470,7 @@ export class TieredStorage {
 
   private async queryL1(id: string): Promise<StoredMessage | null> {
     if (!this.l1Db) return null;
-    
+
     try {
       const results = this.l1Db.exec('SELECT * FROM messages WHERE id = ?', [id]);
       if (results.length > 0 && results[0].values && results[0].values.length > 0) {
@@ -414,18 +479,18 @@ export class TieredStorage {
     } catch (error) {
       console.warn('[TieredStorage] Error querying L1:', error);
     }
-    
+
     return null;
   }
 
   private async evictFromL1(neededTokens: number): Promise<void> {
     if (!this.l1Db) return;
-    
+
     // Get oldest/least accessed messages
     const results = this.l1Db.exec(
       `SELECT * FROM messages ORDER BY last_access ASC LIMIT 100`
     );
-    
+
     if (results.length > 0 && results[0].values) {
       let freedTokens = 0;
       for (const row of results[0].values) {
@@ -433,17 +498,10 @@ export class TieredStorage {
         await this.demoteToL2(message);
         freedTokens += message.tokenCount;
         this.stats.evictions++;
-        
+
         if (freedTokens >= neededTokens) break;
       }
-      
-      // Delete evicted from L1
-      this.l1Db.run(
-        `DELETE FROM messages WHERE id IN (
-          SELECT id FROM messages ORDER BY last_access ASC LIMIT ?
-        )`,
-        [results[0].values.length]
-      );
+      // Note: demoteToL2 already handles individual deletion from L1 and updating l1Tokens
     }
   }
 
@@ -451,17 +509,81 @@ export class TieredStorage {
     // Simple FIFO eviction for L2
     const entries = Array.from(this.l2Archive.entries())
       .sort((a, b) => a[1].timestamp - b[1].timestamp);
-    
+
     let freedTokens = 0;
     for (const [id, message] of entries) {
       this.l2Archive.delete(id);
       freedTokens += message.tokenCount;
       this.stats.evictions++;
-      
+
       if (freedTokens >= neededTokens) break;
     }
-    
+
     this.l2Tokens -= freedTokens;
+  }
+
+  private bufferEvictedForDemotion(message: StoredMessage): void {
+    // We create a promise and store its resolvers so store() can await it
+    // but the sync dispose callback can return immediately
+    this.demotionQueue.push({
+      message,
+      resolve: () => {}, // These will be handled by processBufferedDemotions
+      reject: () => {}
+    });
+  }
+
+  private async processBufferedDemotions(): Promise<void> {
+    if (this.demotionQueue.length === 0) return;
+
+    const release = await this.demotionMutex.acquire();
+    try {
+      while (this.demotionQueue.length > 0) {
+        const item = this.demotionQueue.shift();
+        if (item) {
+          try {
+            await this.demoteToL1(item.message);
+            item.resolve();
+          } catch (error) {
+            item.reject(error);
+          }
+        }
+      }
+    } finally {
+      release();
+    }
+  }
+
+  private getL0TokenCount(): number {
+    let count = 0;
+    for (const msg of this.l0Cache.values()) {
+      count += msg.tokenCount;
+    }
+    return count;
+  }
+
+  private async proactivelyDemoteFromL0(neededTokens: number): Promise<void> {
+    // Manually evict items from L0 to make room for a specific token count
+    // This is more reliable than waiting for LRUCache's internal eviction
+    // because we can await the results.
+    
+    // Sort by last access (oldest first)
+    const messages = Array.from(this.l0Cache.entries())
+      .map(([key, value]) => ({ key, value }))
+      .sort((a, b) => a.value.lastAccess - b.value.lastAccess);
+
+    let freed = 0;
+    for (const { key, value } of messages) {
+      if (freed >= neededTokens) break;
+      
+      // Delete from LRU
+      this.l0Cache.delete(key);
+      // Manually buffer for demotion
+      this.bufferEvictedForDemotion(value);
+      freed += value.tokenCount;
+    }
+    
+    // Now process all buffered demotions (including the ones we just triggered)
+    await this.processBufferedDemotions();
   }
 
   private rowToMessage(row: any[]): StoredMessage {
