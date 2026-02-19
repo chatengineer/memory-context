@@ -84,4 +84,22 @@ describe('TieredStorage Eviction', () => {
     expect(allMessages.length).toBe(20);
     expect(stats.L0.currentTokens + stats.L1.currentTokens + stats.L2.currentTokens).toBeGreaterThan(0);
   });
+
+  it('should correctly compress and decompress Brotli data in L2', async () => {
+    // Fill L0 (100) and L1 (200) to push data to L2 (500)
+    const longContent = "Brotli compression test content. ".repeat(50); // ~1650 bytes, > 1024 threshold
+    
+    // Store 10 messages
+    for (let i = 0; i < 10; i++) {
+      await storage.store(longContent);
+    }
+    
+    const stats = storage.getTierStats();
+    expect(stats.L2.currentTokens).toBeGreaterThan(0);
+    
+    const messages = await storage.getAllMessages();
+    for (const msg of messages) {
+      expect(msg.content).toBe(longContent);
+    }
+  });
 });
