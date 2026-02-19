@@ -7,3 +7,4 @@ dist/
 *.db.tmp
 *.db.backup.*
 test-stats.db
+coverage/

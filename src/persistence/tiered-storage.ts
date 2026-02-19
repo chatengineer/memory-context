@@ -13,6 +13,7 @@ import { LRUCache } from 'lru-cache';
 import { TokenCounter, defaultTokenCounter } from '../utils/token-counter';
 import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
 import { generateSecureId } from '../utils/security';
+import { CompressionManager, compressionManager, CompressionAlgorithm } from '../utils/compression';
 import type { Database, SqlJsStatic } from 'sql.js';
 
 // Queue item for async demotion processing
@@ -83,6 +84,10 @@ export interface StoredMessage {
   accessCount: number;
   lastAccess: number;
   metadata?: Record<string, any>;
+  compression?: {
+    algorithm: CompressionAlgorithm;
+    originalSize: number;
+  };
 }
 
 const DEFAULT_CONFIG: TieredStorageConfig = {
@@ -110,6 +115,7 @@ export class TieredStorage {
 
   private config: TieredStorageConfig;
   private tokenCounter: TokenCounter;
+  private compression: CompressionManager;
   private initialized: boolean = false;
 
   // Async demotion queue - items evicted from L0 that need to be demoted to L1
@@ -132,6 +138,7 @@ export class TieredStorage {
   constructor(config?: Partial<TieredStorageConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.tokenCounter = defaultTokenCounter;
+    this.compression = compressionManager;
 
     // Initialize L0 LRU cache
     this.l0Cache = new LRUCache<string, StoredMessage>({
@@ -221,7 +228,15 @@ export class TieredStorage {
     await this.processBufferedDemotions();
 
     // STEP 3: Store in L0 (hot tier)
-    this.l0Cache.set(id, message);
+    if (tokenCount <= this.config.l0MaxTokens) {
+      this.l0Cache.set(id, message);
+    } else {
+      // Message is oversized for L0 - demote directly to L1
+      await this.demoteToL1(message);
+    }
+
+    // STEP 4: Process any immediate evictions if the message was oversized for L0
+    await this.processBufferedDemotions();
 
     return id;
   }
@@ -256,6 +271,8 @@ export class TieredStorage {
     const l2Message = this.l2Archive.get(id);
     if (l2Message) {
       this.stats.l2Hits++;
+      // Decompress if needed
+      await this.ensureDecompressed(l2Message);
       // Promote to L0
       await this.promoteToL0(l2Message);
       return l2Message;
@@ -263,6 +280,25 @@ export class TieredStorage {
     this.stats.l2Misses++;
 
     return null;
+  }
+
+  /**
+   * Helper to decompress message content if stored in compressed form
+   */
+  private async ensureDecompressed(message: StoredMessage): Promise<void> {
+    if (message.compression && message.compression.algorithm !== 'none') {
+      try {
+        const compressedData = Buffer.from(message.content, 'base64');
+        message.content = await this.compression.decompress(
+          compressedData, 
+          message.compression.algorithm
+        );
+        // Clear compression metadata after decompression
+        message.compression = undefined;
+      } catch (error) {
+        console.error(`[TieredStorage] Failed to decompress message ${message.id}:`, error);
+      }
+    }
   }
 
   /**
@@ -292,6 +328,8 @@ export class TieredStorage {
 
     // Collect from L2
     for (const message of this.l2Archive.values()) {
+      // Ensure decompressed for consumer
+      await this.ensureDecompressed(message);
       messages.push(message);
     }
 
@@ -421,8 +459,19 @@ export class TieredStorage {
   private async demoteToL2(message: StoredMessage): Promise<void> {
     await this.ensureCapacity('L2', message.tokenCount);
 
-    // For L2, we could compress the content
-    // For now, just store as-is
+    // If compression is enabled for L2, compress the content
+    if (this.config.l2Compress && message.tier !== 'L2') {
+      const result = await this.compression.compressForTier(message.content, 'L2');
+      if (result.algorithm !== 'none') {
+        // Store compressed data in the content field as a base64 string
+        message.content = result.data.toString('base64');
+        message.compression = {
+          algorithm: result.algorithm,
+          originalSize: result.originalSize
+        };
+      }
+    }
+
     this.l2Archive.set(message.id, message);
     this.l2Tokens += message.tokenCount;
     
