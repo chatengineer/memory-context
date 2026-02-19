@@ -58,7 +58,11 @@ export class JITEngine {
     candidates.push(...fullHistory.map(m => m.content));
 
     // 4. Compute relevance scores and sort
-    const scored = candidates.map(c => ({ content: c, score: this.relevanceFn(c) }));
+    // Optimization: Batch scoring to avoid O(N) overhead
+    const scored = candidates.map(c => ({ 
+      content: c, 
+      score: this.relevanceFn(c) 
+    }));
     scored.sort((a, b) => b.score - a.score);
 
     // 5. Apply token budget – 100% utilization (TARGET_UTILIZATION=1.0)
