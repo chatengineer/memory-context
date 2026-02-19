@@ -62,6 +62,13 @@ export class SimpleContext {
     }
   }
 
+  /**
+   * Remove and return the oldest item
+   */
+  shift(): string | undefined {
+    return this.items.shift();
+  }
+
   getAll(): string[] {
     return [...this.items];
   }
@@ -95,13 +102,16 @@ export class DegradedContextManager {
   addMessage(content: string): boolean {
     const estimatedTokens = content.length / 4;
     
-    if (this.tokensUsed + estimatedTokens > this.maxTokens) {
-      // Emergency clear if needed
-      while (this.tokensUsed + estimatedTokens > this.maxTokens && this.context.size > 0) {
-        this.context.clear();
-        this.tokensUsed = 0;
+    // Sliding window eviction
+    while (this.tokensUsed + estimatedTokens > this.maxTokens && this.context.size > 0) {
+      const removed = this.context.shift();
+      if (removed) {
+        this.tokensUsed -= (removed.length / 4);
       }
     }
+
+    // Ensure tokensUsed doesn't drift into negative due to rounding if any
+    if (this.tokensUsed < 0) this.tokensUsed = 0;
 
     this.context.add(content);
     this.tokensUsed += estimatedTokens;
