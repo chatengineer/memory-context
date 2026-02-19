@@ -76,6 +76,7 @@ export class MetricsRegistry {
   private gauges: Map<string, number> = new Map();
   private histograms: Map<string, Histogram> = new Map();
   private healthChecks: Map<string, HealthCheck> = new Map();
+  private healthCheckFunctions: Map<string, () => Promise<HealthCheck>> = new Map();
   private startTime: number = Date.now();
   private labels: Record<string, string> = {};
 
@@ -169,9 +170,9 @@ export class MetricsRegistry {
       name,
       status: 'healthy',
       message: 'Not yet checked',
-      lastCheck: 0,
-      details: { check: check.toString() }
+      lastCheck: 0
     });
+    this.healthCheckFunctions.set(name, check);
   }
 
   /**
@@ -179,7 +180,9 @@ export class MetricsRegistry {
    */
   async runHealthCheck(name: string): Promise<HealthCheck> {
     const check = this.healthChecks.get(name);
-    if (!check) {
+    const checkFn = this.healthCheckFunctions.get(name);
+
+    if (!check || !checkFn) {
       return {
         name,
         status: 'unhealthy',
@@ -189,7 +192,7 @@ export class MetricsRegistry {
     }
 
     try {
-      const result = await (check.details?.check as any)();
+      const result = await checkFn();
       this.healthChecks.set(name, result);
       return result;
     } catch (error) {

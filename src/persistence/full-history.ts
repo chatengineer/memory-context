@@ -4,6 +4,7 @@
 
 import { TieredStorage, StoredMessage, tieredStorage } from './tiered-storage';
 import { storageBreaker } from '../utils/circuit-breaker';
+import { metricsRegistry } from '../observability/metrics';
 import { Metadata } from '../types';
 
 /**
@@ -16,6 +17,8 @@ export interface Message {
   timestamp?: number;
   [key: string]: string | number | boolean | null | undefined | any;
 }
+
+const MAX_PENDING_MESSAGES = 1000;
 
 /**
  * FullHistory – stores raw messages with bounded tiered storage
@@ -37,6 +40,19 @@ export class FullHistory {
   }
 
   /**
+   * Internal helper to buffer messages with size limits
+   */
+  private bufferMessage(message: Message): void {
+    this.pendingMessages.push(message);
+    
+    // Enforce limit (FIFO)
+    if (this.pendingMessages.length > MAX_PENDING_MESSAGES) {
+      this.pendingMessages.shift();
+      console.warn(`[FullHistory] Pending message buffer overflow (> ${MAX_PENDING_MESSAGES}). Dropped oldest message.`);
+    }
+  }
+
+  /**
    * Initialize the storage system (must be called before use)
    */
   async initialize(): Promise<void> {
@@ -46,6 +62,18 @@ export class FullHistory {
       await this.storage.initialize();
       this.initialized = true;
       
+      // Register health check for pending buffer
+      metricsRegistry.registerHealthCheck('full_history_pending_buffer', async () => {
+        const count = this.pendingMessages.length;
+        return {
+          name: 'full_history_pending_buffer',
+          status: count > (MAX_PENDING_MESSAGES * 0.8) ? 'degraded' : 'healthy',
+          message: count > 0 ? `${count} messages in pending buffer` : 'Buffer empty',
+          details: { count, limit: MAX_PENDING_MESSAGES },
+          lastCheck: Date.now()
+        };
+      });
+
       // Flush any pending messages
       for (const msg of this.pendingMessages) {
         await this.addMessage(msg);
@@ -65,7 +93,7 @@ export class FullHistory {
 
     // If not initialized, buffer the message
     if (!this.initialized) {
-      this.pendingMessages.push(message);
+      this.bufferMessage(message);
       return `pending_${Date.now()}`;
     }
 
@@ -81,7 +109,7 @@ export class FullHistory {
     } catch (error) {
       console.error('[FullHistory] Error storing message:', error);
       // Fallback: store in pending buffer
-      this.pendingMessages.push(message);
+      this.bufferMessage(message);
       return `fallback_${Date.now()}`;
     }
   }
