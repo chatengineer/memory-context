@@ -51,12 +51,23 @@ class AsyncMutex {
 
 // Initialize sql.js lazily
 let SQL: SqlJsStatic | null = null;
-async function getSqlJs(): Promise<SqlJsStatic> {
-  if (!SQL) {
-    const sqlJs = await import('sql.js');
-    SQL = await (sqlJs.default as any)();
+let sqlLoadError: Error | null = null;
+
+async function getSqlJs(): Promise<SqlJsStatic | null> {
+  if (!SQL && !sqlLoadError) {
+    try {
+      const sqlJs = await import('sql.js');
+      SQL = await (sqlJs.default as any)();
+    } catch (error) {
+      sqlLoadError = error as Error;
+      defaultLogger.error('Failed to load sql.js - SQLite persistence unavailable', sqlLoadError, {
+        component: 'TieredStorage',
+        error: sqlLoadError.message
+      });
+      return null;
+    }
   }
-  return SQL!;
+  return SQL;
 }
 
 export interface StorageTier {
@@ -166,6 +177,12 @@ export class TieredStorage {
     try {
       await storageBreaker.execute(async () => {
         const SQL = await getSqlJs();
+        if (!SQL) {
+          // SQLite unavailable (e.g., ESM import issues in test environments)
+          // Continue with L0-only mode
+          defaultLogger.warn('SQLite unavailable, using L0-only mode', { component: 'TieredStorage' });
+          return;
+        }
         this.l1Db = new SQL.Database();
 
         // Create tables for L1 storage
