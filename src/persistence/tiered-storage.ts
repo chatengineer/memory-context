@@ -340,7 +340,7 @@ export class TieredStorage {
           }
         }
       } catch (error: any) {
-        console.warn('[TieredStorage] Error querying L1:', error);
+        defaultLogger.warn('Error querying L1', { component: 'TieredStorage', error: error.message });
       }
     }
 
@@ -468,7 +468,7 @@ export class TieredStorage {
       this.stats.demotions++;
 
     } catch (error: any) {
-      console.error('[TieredStorage] Error demoting to L1:', error);
+      defaultLogger.error('Error demoting to L1', error, { component: 'TieredStorage' });
       // If L1 fails, try L2
       await this.demoteToL2(message);
     }
@@ -544,7 +544,7 @@ export class TieredStorage {
         return this.rowToMessage(results[0].values[0]);
       }
     } catch (error: any) {
-      console.warn('[TieredStorage] Error querying L1:', error);
+      defaultLogger.warn('Error querying L1', { component: 'TieredStorage', error: error.message });
     }
 
     return null;
