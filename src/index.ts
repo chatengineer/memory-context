@@ -231,11 +231,14 @@ export class MemoryContextPlugin {
         id: row.id,
         score: 1,
         content: row.content,
-        metadata: row.metadata,
+        metadata: {
+          ...(row.metadata || {}),
+          provenance: row.provenance
+        },
         source: row.source,
         timestamp: row.timestamp,
         explanation: row.explanation,
-        matchedTerms: query ? [query.toLowerCase()] : []
+        matchedTerms: row.matchedTerms || []
       }));
     }
 
@@ -261,7 +264,10 @@ export class MemoryContextPlugin {
         id: row.id,
         score: 1,
         content: row.content,
-        metadata: row.metadata,
+        metadata: {
+          ...(row.metadata || {}),
+          provenance: row.provenance
+        },
         source: row.source,
         timestamp: row.timestamp,
         explanation: row.explanation
@@ -586,6 +592,28 @@ export const memoryContextPlugin = {
       api.on("before_prompt_build", async () => ({
         prependSystemContext: MEMORY_CONTEXT_GUIDANCE,
       }));
+    }
+
+    if (api.registerHttpRoute) {
+      api.registerHttpRoute({
+        path: "/plugins/memory-context",
+        auth: "plugin",
+        match: "prefix",
+        handler: async (_req: any, res: any) => {
+          const status = await plugin.invokeGatewayMethod("memory_context.status");
+          const payload = {
+            ok: true,
+            plugin: status.plugin,
+            engine: status.engine,
+            history: status.history,
+            storage: status.storage,
+            diff: plugin.getToolHandlers().memory_context_diff ? await plugin.invokeTool("memory_context_diff") : null
+          };
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          res.end(JSON.stringify(payload, null, 2));
+        },
+      });
     }
 
     if (api.registerCommand) {

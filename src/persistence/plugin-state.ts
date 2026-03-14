@@ -27,6 +27,12 @@ export interface SqliteSearchRow {
   metadata?: Metadata;
   timestamp?: number;
   explanation?: string;
+  matchedTerms?: string[];
+  provenance?: {
+    backend: 'sqlite';
+    filters: Record<string, unknown>;
+    ranking: 'recency-filtered-like-match';
+  };
 }
 
 export interface NormalizedPluginState {
@@ -378,6 +384,11 @@ export class PluginStateStore {
 
     return rows.map(row => {
       const metadata = this.parseJson(row.metadata) || {};
+      const loweredContent = String(row.content).toLowerCase();
+      const loweredQuery = query.toLowerCase().trim();
+      const matchedTerms = loweredQuery
+        ? loweredQuery.split(/\s+/).filter(Boolean).filter(term => loweredContent.includes(term))
+        : [];
       return {
         id: String(row.id),
         content: String(row.content),
@@ -391,7 +402,20 @@ export class PluginStateStore {
           options.source ? `source=${options.source}` : null,
           options.role ? `role=${options.role}` : null,
           options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
-        ].filter(Boolean).join(', ')
+        ].filter(Boolean).join(', '),
+        matchedTerms,
+        provenance: {
+          backend: 'sqlite',
+          filters: {
+            query,
+            source: options.source || 'all',
+            role: options.role ?? null,
+            since: options.since ?? null,
+            until: options.until ?? null,
+            limit: options.limit || 10
+          },
+          ranking: 'recency-filtered-like-match'
+        }
       };
     });
   }
@@ -445,7 +469,20 @@ export class PluginStateStore {
           options.source ? `source=${options.source}` : null,
           options.role ? `role=${options.role}` : null,
           options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
-        ].filter(Boolean).join(', ')
+        ].filter(Boolean).join(', '),
+        matchedTerms: [],
+        provenance: {
+          backend: 'sqlite',
+          filters: {
+            ids: options.ids ?? null,
+            source: options.source || 'all',
+            role: options.role ?? null,
+            since: options.since ?? null,
+            until: options.until ?? null,
+            limit: options.limit || 50
+          },
+          ranking: 'recency-filtered-like-match'
+        }
       };
     });
   }
