@@ -1,23 +1,51 @@
 {
   "name": "memory-context",
-  "version": "1.4.0",
-  "description": "The ultimate context preservation system - zero-shift, JIT hierarchical assembly with quantum anchors",
-  "main": "./index.ts",
+  "version": "1.5.0",
+  "description": "Advanced context preservation system for OpenClaw with JIT hierarchical assembly, tiered storage, and shift-immunity safeguards",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "watch": "tsc -watch",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+    "test:unit": "node --experimental-vm-modules node_modules/.bin/jest tests/unit",
+    "test:integration": "node --experimental-vm-modules node_modules/.bin/jest tests/integration",
+    "benchmark": "node --experimental-strip-types benchmarks/run-benchmarks.ts",
+    "verify:metadata": "node scripts/verify-metadata.js",
+    "ci": "npm run verify:metadata && npm run build && npm run test:coverage"
   },
   "keywords": [
     "openclaw",
     "memory",
     "context",
     "jit",
-    "zero-shift",
-    "hierarchical"
+    "hierarchical",
+    "bm25",
+    "plugin"
   ],
   "author": "Chat Engineer",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chatengineer/memory-context.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chatengineer/memory-context/issues"
+  },
+  "homepage": "https://github.com/chatengineer/memory-context#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "gpt-tokenizer": "^3.4.0",
     "lru-cache": "^11.0.0",
