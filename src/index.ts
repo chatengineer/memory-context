@@ -482,7 +482,7 @@ function createPluginRuntime(config?: Partial<MemoryContextConfig>) {
   return plugin;
 }
 
-const memoryContextPlugin = {
+export const memoryContextPlugin = {
   id: "memory-context",
   name: "Memory Context - Zero-Shift Context Engine",
   kind: "memory",
@@ -520,5 +520,9 @@ const memoryContextPlugin = {
     }
   }
 };
+
+export function register(api: any) {
+  return memoryContextPlugin.register(api);
+}
 
 export default memoryContextPlugin;
