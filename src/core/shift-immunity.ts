@@ -3,35 +3,156 @@
 // Quantum anchors are unbreakable continuity markers.
 
 import { defaultLogger } from '../observability/metrics';
+import {
+  AnchorFactory,
+  AnchorSerializer,
+  TypedAnchor,
+  DecisionAnchor,
+  StateAnchor,
+  ReferenceAnchor,
+  CustomAnchor
+} from './typed-anchors';
 
 /**
- * ShiftImmunity – manages a set of "quantum anchors" that are always injected
+ * ShiftImmunity – manages a set of anchors that are always injected
  * into the rebuilt context, guaranteeing continuity across model switches.
+ *
+ * Supports both legacy raw string anchors and structured typed anchors.
  */
 export class ShiftImmunity {
-  private anchors: Set<string>;
+  private rawAnchors: Set<string>;
+  private typedAnchors: Map<string, TypedAnchor>;
 
   constructor() {
-    this.anchors = new Set<string>();
-    // Initialise with a default anchor that marks the start of the plugin context
-    this.anchors.add("[QUANTUM_ANCHOR_START]");
-    this.anchors.add("[QUANTUM_ANCHOR_END]");
+    this.rawAnchors = new Set<string>();
+    this.typedAnchors = new Map<string, TypedAnchor>();
+
+    // Legacy sentinels: keep them stable for backwards compatibility.
+    this.rawAnchors.add('[QUANTUM_ANCHOR_START]');
+    this.rawAnchors.add('[QUANTUM_ANCHOR_END]');
   }
 
-  /** Add a custom anchor (e.g., a marker for a critical decision). */
+  /** Add a raw anchor string (legacy API). */
   addAnchor(anchor: string): void {
-    this.anchors.add(anchor);
+    if (!anchor?.trim()) return;
+    this.rawAnchors.add(anchor.trim());
   }
 
-  /** Retrieve all anchors in insertion order (Set preserves insertion order). */
+  /** Add or replace a typed anchor. */
+  addTypedAnchor(anchor: TypedAnchor): TypedAnchor {
+    this.typedAnchors.set(anchor.id, anchor);
+    return anchor;
+  }
+
+  addDecisionAnchor(
+    decision: string,
+    rationale: string,
+    options?: {
+      alternatives?: string[];
+      impact?: 'high' | 'medium' | 'low';
+      metadata?: Record<string, unknown>;
+    }
+  ): DecisionAnchor {
+    const anchor = AnchorFactory.createDecision(decision, rationale, options);
+    this.addTypedAnchor(anchor);
+    return anchor;
+  }
+
+  addStateAnchor(
+    key: string,
+    value: unknown,
+    previousValue?: unknown,
+    metadata?: Record<string, unknown>
+  ): StateAnchor {
+    const anchor = AnchorFactory.createState(key, value, previousValue, metadata);
+    this.addTypedAnchor(anchor);
+    return anchor;
+  }
+
+  addReferenceAnchor(
+    referenceType: ReferenceAnchor['referenceType'],
+    reference: string,
+    title?: string,
+    metadata?: Record<string, unknown>
+  ): ReferenceAnchor {
+    const anchor = AnchorFactory.createReference(referenceType, reference, title, metadata);
+    this.addTypedAnchor(anchor);
+    return anchor;
+  }
+
+  addCustomAnchor(
+    customType: string,
+    data: Record<string, unknown>,
+    content?: string,
+    metadata?: Record<string, unknown>
+  ): CustomAnchor {
+    const anchor = AnchorFactory.createCustom(customType, data, content, metadata);
+    this.addTypedAnchor(anchor);
+    return anchor;
+  }
+
+  removeAnchor(anchorIdOrContent: string): boolean {
+    const removedTyped = this.typedAnchors.delete(anchorIdOrContent);
+    const removedRaw = this.rawAnchors.delete(anchorIdOrContent);
+    return removedTyped || removedRaw;
+  }
+
+  clearTypedAnchors(): void {
+    this.typedAnchors.clear();
+  }
+
+  /** Retrieve typed anchors in insertion order. */
+  getTypedAnchors(): TypedAnchor[] {
+    return Array.from(this.typedAnchors.values());
+  }
+
+  /** Retrieve all anchors as injectable context strings. */
   getAnchors(): string[] {
-    return Array.from(this.anchors);
+    const result: string[] = [];
+
+    for (const anchor of this.rawAnchors) {
+      result.push(anchor);
+    }
+
+    for (const anchor of this.typedAnchors.values()) {
+      result.push(AnchorSerializer.toContextString(anchor));
+    }
+
+    return result;
   }
 
-  /** Preserve anchors across a model switch – a no‑op but kept for API symmetry. */
+  exportAnchors(): {
+    raw: string[];
+    typed: TypedAnchor[];
+  } {
+    return {
+      raw: Array.from(this.rawAnchors),
+      typed: this.getTypedAnchors()
+    };
+  }
+
+  importAnchors(data: { raw?: string[]; typed?: unknown[] }): void {
+    if (Array.isArray(data.raw)) {
+      this.rawAnchors = new Set(data.raw.filter(Boolean));
+    }
+
+    this.typedAnchors.clear();
+    if (Array.isArray(data.typed)) {
+      for (const candidate of data.typed) {
+        const validated = AnchorFactory.validate(candidate);
+        if (validated) {
+          this.typedAnchors.set(validated.id, validated);
+        }
+      }
+    }
+  }
+
+  /** Preserve anchors across a model switch. */
   preserveAnchors(): void {
-    // In a real implementation we might serialize/deserialize anchors.
-    // Here we simply ensure the set remains unchanged.
-    defaultLogger.info('Preserving anchors across model switch', { component: 'ShiftImmunity' });
+    defaultLogger.info('Preserving anchors across model switch', {
+      component: 'ShiftImmunity',
+      rawAnchors: this.rawAnchors.size,
+      typedAnchors: this.typedAnchors.size
+    });
   }
 }

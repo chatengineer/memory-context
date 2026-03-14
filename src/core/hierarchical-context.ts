@@ -54,4 +54,17 @@ export class HierarchicalContext {
   clearLayer(layer: Layer): void {
     this.layers.set(layer, []);
   }
+
+  exportState(): { layers: string[][] } {
+    return {
+      layers: this.getAllLayers().map(bucket => [...bucket])
+    };
+  }
+
+  importState(data: { layers?: string[][] }): void {
+    if (!data.layers) return;
+    for (let i = Layer.L0; i <= Layer.L4; i++) {
+      this.layers.set(i as Layer, [...(data.layers[i] || [])]);
+    }
+  }
 }
