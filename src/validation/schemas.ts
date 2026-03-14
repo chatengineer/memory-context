@@ -76,11 +76,13 @@ export type ValidatedMemoryContextConfig = z.infer<typeof MemoryContextConfigSch
  * Relevance scoring configuration schema
  */
 export const RelevanceConfigSchema = z.object({
-  keywordWeight: z.number().min(0).max(1).default(0.35),
-  recencyWeight: z.number().min(0).max(1).default(0.25),
-  priorityWeight: z.number().min(0).max(1).default(0.20),
-  densityWeight: z.number().min(0).max(1).default(0.10),
-  overlapWeight: z.number().min(0).max(1).default(0.10),
+  keywordWeight: z.number().min(0).max(1).default(0.30),
+  recencyWeight: z.number().min(0).max(1).default(0.20),
+  priorityWeight: z.number().min(0).max(1).default(0.15),
+  densityWeight: z.number().min(0).max(1).default(0.08),
+  overlapWeight: z.number().min(0).max(1).default(0.07),
+  queryCoverageWeight: z.number().min(0).max(1).default(0.12),
+  exactPhraseWeight: z.number().min(0).max(1).default(0.08),
   halfLife: z.number().positive().default(86400000), // 24 hours
   maxAge: z.number().positive().default(604800000), // 7 days
   priorityKeywords: z.set(z.string()).optional(),
@@ -92,7 +94,9 @@ export const RelevanceConfigSchema = z.object({
       data.recencyWeight,
       data.priorityWeight,
       data.densityWeight,
-      data.overlapWeight
+      data.overlapWeight,
+      data.queryCoverageWeight,
+      data.exactPhraseWeight
     ];
     const sum = weights.reduce((a, b) => a + b, 0);
     return Math.abs(sum - 1.0) < 0.01; // Allow small floating point errors

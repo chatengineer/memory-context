@@ -14,7 +14,7 @@ function makeMessage(i, now) {
   ];
   const content = corpus[i % corpus.length];
   const role = i % 7 === 0 ? 'system' : i % 2 === 0 ? 'assistant' : 'user';
-  return { content, role, timestamp: now - (1000 * (250 - i)) };
+  return { content, role, timestamp: now - (1000 * (120 - i)) };
 }
 
 async function bench() {
@@ -25,15 +25,19 @@ async function bench() {
     quantumAnchorsEnabled: true,
     persistenceEnabled: true,
     predictiveAssemblyEnabled: true,
+    adaptiveTuningEnabled: true,
+    adaptiveLearningRate: 0.01,
+    minRebuildIntervalMs: 25,
   });
 
   const originalLog = console.log;
   console.log = () => {};
   await plugin.initialize();
   const now = Date.now();
+  const count = 120;
 
   const ingestStart = performance.now();
-  for (let i = 0; i < 250; i++) {
+  for (let i = 0; i < count; i++) {
     await plugin.onMessage(makeMessage(i, now));
   }
   const ingestMs = performance.now() - ingestStart;
@@ -53,9 +57,9 @@ async function bench() {
 
   console.log(JSON.stringify({
     benchmark: {
-      ingestedMessages: 250,
+      ingestedMessages: count,
       ingestMs: Number(ingestMs.toFixed(2)),
-      avgIngestMs: Number((ingestMs / 250).toFixed(4)),
+      avgIngestMs: Number((ingestMs / count).toFixed(4)),
       searchMs: Number(searchMs.toFixed(2)),
       recallMs: Number(recallMs.toFixed(2)),
       searchCount: search.length,
@@ -65,10 +69,10 @@ async function bench() {
       engine: status.engine
     }
   }, null, 2));
+  process.exit(0);
 }
 
 bench().catch(err => {
-  console.error = process.stderr.write.bind(process.stderr);
   process.stderr.write(String(err?.stack || err) + '\n');
   process.exit(1);
 });

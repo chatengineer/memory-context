@@ -91,7 +91,10 @@ export class AdvancedRelevanceScorer {
   private adaptationStats = {
     updates: 0,
     lastAdjustmentAt: 0,
-    learningRate: 0.05,
+    learningRate: 0.01,
+    minWeight: 0.05,
+    maxWeight: 0.35,
+    adjustmentInterval: 25,
   };
 
   constructor(config?: Partial<RelevanceConfig>) {
@@ -272,6 +275,11 @@ export class AdvancedRelevanceScorer {
   }
 
   recordSelectionOutcome(result: RelevanceResult, positive: boolean = true): void {
+    this.adaptationStats.updates += 1;
+    if (this.adaptationStats.updates % this.adaptationStats.adjustmentInterval !== 0) {
+      return;
+    }
+
     const direction = positive ? 1 : -1;
     const lr = this.adaptationStats.learningRate;
     const weightMap: Array<[keyof RelevanceConfig, number]> = [
@@ -286,20 +294,24 @@ export class AdvancedRelevanceScorer {
 
     for (const [key, factor] of weightMap) {
       const current = this.config[key] as number;
-      const nudged = Math.max(0.01, current + direction * lr * (factor - 0.5) * 0.1);
-      (this.config as any)[key] = nudged;
+      const candidate = current + direction * lr * (factor - 0.5) * 0.03;
+      const bounded = Math.min(this.adaptationStats.maxWeight, Math.max(this.adaptationStats.minWeight, candidate));
+      (this.config as any)[key] = bounded;
     }
 
     this.normalizeWeights();
-    this.adaptationStats.updates += 1;
+    this.applyWeightFloor();
     this.adaptationStats.lastAdjustmentAt = Date.now();
   }
 
-  getAdaptiveStats(): { updates: number; lastAdjustmentAt: number; learningRate: number; weights: RelevanceConfig } {
+  getAdaptiveStats(): { updates: number; lastAdjustmentAt: number; learningRate: number; adjustmentInterval: number; minWeight: number; maxWeight: number; weights: RelevanceConfig } {
     return {
       updates: this.adaptationStats.updates,
       lastAdjustmentAt: this.adaptationStats.lastAdjustmentAt,
       learningRate: this.adaptationStats.learningRate,
+      adjustmentInterval: this.adaptationStats.adjustmentInterval,
+      minWeight: this.adaptationStats.minWeight,
+      maxWeight: this.adaptationStats.maxWeight,
       weights: this.getConfig()
     };
   }
@@ -329,6 +341,23 @@ export class AdvancedRelevanceScorer {
     for (const key of keys) {
       (this.config as any)[key] = (this.config[key] as number) / total;
     }
+  }
+
+  private applyWeightFloor(): void {
+    const keys: Array<keyof RelevanceConfig> = [
+      'keywordWeight',
+      'recencyWeight',
+      'priorityWeight',
+      'densityWeight',
+      'overlapWeight',
+      'queryCoverageWeight',
+      'exactPhraseWeight'
+    ];
+
+    for (const key of keys) {
+      (this.config as any)[key] = Math.max(this.adaptationStats.minWeight, this.config[key] as number);
+    }
+    this.normalizeWeights();
   }
 }
 

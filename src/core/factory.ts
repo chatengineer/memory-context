@@ -1,12 +1,5 @@
 /**
  * MemoryContextFactory - Async factory for memory-context components
- * 
- * Critical Issue #3: Async Constructor Resolution
- * 
- * Problem: SQLite initialization and other async operations cannot happen
- * in constructors, leading to race conditions.
- * 
- * Solution: Factory pattern with proper async initialization and dependency injection.
  */
 
 import { JITEngine } from './jit-engine';
@@ -26,6 +19,9 @@ export interface MemoryContextConfig {
   quantumAnchorsEnabled: boolean;
   persistenceEnabled: boolean;
   predictiveAssemblyEnabled?: boolean;
+  adaptiveTuningEnabled?: boolean;
+  adaptiveLearningRate?: number;
+  minRebuildIntervalMs?: number;
   statePath?: string;
   tieredStorageConfig?: {
     l0MaxTokens?: number;
@@ -35,34 +31,24 @@ export interface MemoryContextConfig {
 }
 
 const DEFAULT_CONFIG: MemoryContextConfig = {
-  maxContextTokens: 128000,      // Default to large context
-  targetUtilization: 0.95,       // 95% utilization with 5% safety margin
+  maxContextTokens: 128000,
+  targetUtilization: 0.95,
   zeroShiftEnabled: true,
   quantumAnchorsEnabled: true,
   persistenceEnabled: true,
   predictiveAssemblyEnabled: true,
+  adaptiveTuningEnabled: true,
+  adaptiveLearningRate: 0.01,
+  minRebuildIntervalMs: 0,
   statePath: '.openclaw/memory-context/plugin-state.db'
 };
 
-/**
- * MemoryContextFactory - Creates fully initialized memory-context instances
- * 
- * Usage:
- * ```typescript
- * const factory = new MemoryContextFactory(config);
- * const context = await factory.create();
- * // Now context is fully initialized and ready to use
- * ```
- */
 export class MemoryContextFactory {
   private config: MemoryContextConfig;
-  private initialized: boolean = false;
+  private initialized = false;
   private initializationPromise: Promise<void> | null = null;
-  
-  // Singleton instances (created once, reused)
   private static sharedInstance: MemoryContextFactory | null = null;
-  
-  // Components
+
   private _hierarchy: HierarchicalContext | null = null;
   private _immunity: ShiftImmunity | null = null;
   private _budget: BudgetManager | null = null;
@@ -75,9 +61,6 @@ export class MemoryContextFactory {
     this.config = parsed;
   }
 
-  /**
-   * Get singleton factory instance
-   */
   static getInstance(config?: Partial<MemoryContextConfig>): MemoryContextFactory {
     if (!MemoryContextFactory.sharedInstance) {
       MemoryContextFactory.sharedInstance = new MemoryContextFactory(config);
@@ -85,23 +68,11 @@ export class MemoryContextFactory {
     return MemoryContextFactory.sharedInstance;
   }
 
-  /**
-   * Initialize all components (idempotent, thread-safe)
-   */
   async initialize(): Promise<void> {
-    // Return existing promise if initialization is in progress
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-    
-    // Already initialized
-    if (this.initialized) {
-      return;
-    }
-    
-    // Start initialization
+    if (this.initializationPromise) return this.initializationPromise;
+    if (this.initialized) return;
+
     this.initializationPromise = this.doInitialize();
-    
     try {
       await this.initializationPromise;
       this.initialized = true;
@@ -112,26 +83,22 @@ export class MemoryContextFactory {
 
   private async doInitialize(): Promise<void> {
     defaultLogger.info('Initializing components...', { component: 'MemoryContextFactory' });
-    
-    // 1. Initialize tiered storage (async)
+
     if (this.config.persistenceEnabled) {
       this._storage = tieredStorage;
       await this._storage.initialize();
     }
-    
-    // 2. Initialize history (depends on storage)
+
     this._history = fullHistory;
     await this._history.initialize();
-    
-    // 3. Initialize synchronous components
+
     this._hierarchy = new HierarchicalContext();
     this._immunity = new ShiftImmunity();
     this._budget = new BudgetManager(
       this.config.targetUtilization,
       this.config.maxContextTokens
     );
-    
-    // 4. Initialize JIT engine (depends on all above)
+
     this._engine = new JITEngine(
       this._hierarchy,
       this._immunity,
@@ -139,29 +106,20 @@ export class MemoryContextFactory {
       this._history,
       computeRelevanceScore
     );
-    
-    // 5. Enable zero-shift mode if configured
+
     if (this.config.zeroShiftEnabled) {
       this._engine.enableZeroShiftMode();
     }
-    
+
     defaultLogger.info('Initialization complete', { component: 'MemoryContextFactory' });
   }
 
-  /**
-   * Create a fully initialized JITEngine
-   */
   async createEngine(): Promise<JITEngine> {
     await this.initialize();
-    if (!this._engine) {
-      throw new Error('[MemoryContextFactory] Engine initialization failed');
-    }
+    if (!this._engine) throw new Error('[MemoryContextFactory] Engine initialization failed');
     return this._engine;
   }
 
-  /**
-   * Get component instances (throws if not initialized)
-   */
   getEngine(): JITEngine {
     this.ensureInitialized();
     return this._engine!;
@@ -192,28 +150,18 @@ export class MemoryContextFactory {
     return this._storage!;
   }
 
-  /**
-   * Check if initialized
-   */
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  /**
-   * Get configuration
-   */
   getConfig(): MemoryContextConfig {
     return { ...this.config };
   }
 
-  /**
-   * Reset the factory (for testing)
-   */
   async reset(): Promise<void> {
     if (this._history) {
       await this._history.clear();
     }
-    
     this._hierarchy = null;
     this._immunity = null;
     this._budget = null;
@@ -226,14 +174,11 @@ export class MemoryContextFactory {
 
   private ensureInitialized(): void {
     if (!this.initialized) {
-      throw new Error(
-        '[MemoryContextFactory] Not initialized. Call initialize() first.'
-      );
+      throw new Error('[MemoryContextFactory] Not initialized. Call initialize() first.');
     }
   }
 }
 
-// Export convenience function
 export async function createMemoryContext(
   config?: Partial<MemoryContextConfig>
 ): Promise<JITEngine> {
@@ -241,5 +186,4 @@ export async function createMemoryContext(
   return factory.createEngine();
 }
 
-// Export singleton factory
 export const memoryContextFactory = MemoryContextFactory.getInstance();

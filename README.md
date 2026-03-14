@@ -172,16 +172,23 @@ index.addDocument({ id: 'msg1', content: 'Important decision made today' });
 const results = index.search('decision', 10);
 ```
 
-### 7. Advanced Relevance Scoring (`src/heuristics/advanced-relevance.ts`) - NEW in v1.3.0
+### 7. Advanced Relevance Scoring (`src/heuristics/advanced-relevance.ts`) - upgraded
 
-Multi-factor relevance scoring.
+Multi-factor relevance scoring with adaptive tuning guardrails.
 
 **Factors:**
-- **Keyword (35%)**: BM25-based keyword matching
-- **Recency (25%)**: Time decay with configurable half-life
-- **Priority (20%)**: Boost for priority keywords
-- **Density (10%)**: Semantic information density
-- **Overlap (10%)**: Context window overlap
+- **Keyword**: BM25-based keyword matching
+- **Recency**: Time decay with configurable half-life
+- **Priority**: Boost for priority keywords
+- **Density**: Semantic information density
+- **Overlap**: Context window overlap
+- **Query Coverage**: Fraction of query terms covered
+- **Exact Phrase**: Exact/n-gram phrase alignment
+
+**Adaptive tuning:**
+- bounded per-factor drift
+- configurable learning rate
+- adjustment intervals to prevent runaway weight collapse
 
 ### 8. Observability (`src/observability/metrics.ts`) - NEW in v1.4.0
 
@@ -537,5 +544,8 @@ MIT License - See LICENSE file for details.
 - #7: Advanced Relevance Scoring
 - #8: Observability/Metrics
 - #10: Input Validation
+
+**Repository:** `github.com/chatengineer/memory-context` (private)
+ Validation
 
 **Repository:** `github.com/chatengineer/memory-context` (private)

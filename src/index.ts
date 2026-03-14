@@ -36,6 +36,9 @@ export class MemoryContextPlugin {
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
   private previousBuiltContext: string = "";
+  private lastBuildAt: number = 0;
+  private rebuildPending: boolean = false;
+  private pendingRebuildTrigger: string = "";
   private lastBuildExplanation: {
     trigger?: string;
     changed: boolean;
@@ -224,6 +227,7 @@ export class MemoryContextPlugin {
       await this.initialize();
     }
 
+    await this.flushPendingRebuild();
     const resolvedOptions: MemorySearchOptions = typeof options === 'number' ? { limit: options } : options;
     const sqlRows = await this.stateStore.searchRetrievalCandidates(query, resolvedOptions);
     if (sqlRows.length > 0) {
@@ -353,7 +357,9 @@ export class MemoryContextPlugin {
             guidanceEnabled: true,
             operatorCommand: '/memorycontext',
             statePath: this.stateStore.getPath(),
-            config: this.factory.getConfig()
+            config: this.factory.getConfig(),
+            rebuildPending: this.rebuildPending,
+            lastBuildAt: this.lastBuildAt
           },
           storage: this.factory.getStorage().getTierStats(),
           history: this.factory.getHistory().getStats(),
@@ -496,6 +502,22 @@ export class MemoryContextPlugin {
     await this.stateStore.setMeta('version', '1.6.0');
     await this.stateStore.setMeta('savedAt', Date.now());
     await this.stateStore.setMeta('lastContext', engine.getLastContext());
+    await this.stateStore.setMeta('rebuildPending', this.rebuildPending);
+    await this.stateStore.setMeta('lastBuildAt', this.lastBuildAt);
+  }
+
+  private async flushPendingRebuild(): Promise<void> {
+    if (!this.rebuildPending) return;
+    const engine = this.factory.getEngine();
+    const previousContext = engine.getLastContext();
+    await engine.buildContext({ content: this.pendingRebuildTrigger || 'pending rebuild flush' });
+    const currentContext = engine.getLastContext();
+    this.previousBuiltContext = previousContext;
+    this.lastBuildExplanation = this.computeContextDiff(previousContext, currentContext, this.pendingRebuildTrigger || 'pending rebuild flush');
+    this.lastBuildAt = Date.now();
+    this.rebuildPending = false;
+    this.pendingRebuildTrigger = "";
+    await this.persistVolatileState();
   }
 
   private async persistAnchors(): Promise<void> {
