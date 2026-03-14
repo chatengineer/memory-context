@@ -35,11 +35,11 @@ export interface RelevanceConfig {
 }
 
 const DEFAULT_CONFIG: RelevanceConfig = {
-  keywordWeight: 0.35,
-  recencyWeight: 0.25,
-  priorityWeight: 0.20,
-  densityWeight: 0.10,
-  overlapWeight: 0.10,
+  keywordWeight: 0.3,
+  recencyWeight: 0.2,
+  priorityWeight: 0.15,
+  densityWeight: 0.08,
+  overlapWeight: 0.07,
 
   halfLife: 24 * 60 * 60 * 1000, // 24 hours
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -75,6 +75,8 @@ export interface RelevanceResult {
     priority: number;
     density: number;
     overlap: number;
+    queryCoverage: number;
+    exactPhrase: number;
   };
   explanation: string;
 }
@@ -104,7 +106,9 @@ export class AdvancedRelevanceScorer {
       recency: this.computeRecencyScore(metadata?.timestamp, context?.referenceTime),
       priority: this.computePriorityScore(content),
       density: this.computeDensityScore(content),
-      overlap: this.computeOverlapScore(content, context?.currentContext)
+      overlap: this.computeOverlapScore(content, context?.currentContext),
+      queryCoverage: this.computeQueryCoverageScore(content, context?.query),
+      exactPhrase: this.computeExactPhraseScore(content, context?.query)
     };
 
     // Apply metadata multipliers
@@ -123,7 +127,9 @@ export class AdvancedRelevanceScorer {
       factors.recency * this.config.recencyWeight +
       factors.priority * this.config.priorityWeight +
       factors.density * this.config.densityWeight +
-      factors.overlap * this.config.overlapWeight;
+      factors.overlap * this.config.overlapWeight +
+      factors.queryCoverage * 0.12 +
+      factors.exactPhrase * 0.08;
 
     const finalScore = weightedScore * metadataMultiplier;
 
@@ -258,6 +264,40 @@ export class AdvancedRelevanceScorer {
     return (uniqueRatio * 0.5 + lengthScore * 0.3 + punctScore * 0.2);
   }
 
+  private computeQueryCoverageScore(content: string, query?: string): number {
+    if (!query?.trim()) return 0;
+
+    const queryTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 1);
+    if (queryTerms.length === 0) return 0;
+
+    const contentLower = content.toLowerCase();
+    const matched = queryTerms.filter(term => contentLower.includes(term));
+    return matched.length / queryTerms.length;
+  }
+
+  private computeExactPhraseScore(content: string, query?: string): number {
+    if (!query?.trim()) return 0;
+    const normalizedQuery = query.toLowerCase().trim().replace(/\s+/g, ' ');
+    const normalizedContent = content.toLowerCase().replace(/\s+/g, ' ');
+    if (normalizedContent.includes(normalizedQuery)) return 1;
+
+    const queryBigrams = this.buildNGrams(normalizedQuery, 2);
+    if (queryBigrams.length === 0) return 0;
+    const contentBigrams = new Set(this.buildNGrams(normalizedContent, 2));
+    const overlap = queryBigrams.filter(gram => contentBigrams.has(gram)).length;
+    return overlap / queryBigrams.length;
+  }
+
+  private buildNGrams(text: string, n: number): string[] {
+    const tokens = text.split(/\s+/).filter(Boolean);
+    if (tokens.length < n) return tokens.length ? [tokens.join(' ')] : [];
+    const grams: string[] = [];
+    for (let i = 0; i <= tokens.length - n; i++) {
+      grams.push(tokens.slice(i, i + n).join(' '));
+    }
+    return grams;
+  }
+
   /**
    * Compute context overlap score
    */
@@ -293,6 +333,8 @@ export class AdvancedRelevanceScorer {
     const parts: string[] = [];
 
     if (factors.keyword > 0.5) parts.push('high keyword relevance');
+    if (factors.queryCoverage > 0.8) parts.push('strong query coverage');
+    if (factors.exactPhrase > 0.8) parts.push('exact phrase match');
     if (factors.recency > 0.7) parts.push('recent');
     if (factors.priority > 0.3) parts.push('contains priority terms');
     if (factors.density > 0.6) parts.push('information-dense');

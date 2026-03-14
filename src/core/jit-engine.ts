@@ -349,7 +349,7 @@ export class JITEngine {
       scoringContext
     );
 
-    return candidates
+    const scored = candidates
       .map((candidate, index) => {
         const baseScore = batchScores[index] ?? this.relevanceFn(candidate.content, candidate.metadata, scoringContext);
         const layerBoost = candidate.source === 'hierarchy'
@@ -359,12 +359,31 @@ export class JITEngine {
         const predictedBoost = predictedIds.get(candidate.id) || 0;
 
         return {
+          candidate,
           content: candidate.content,
+          canonical: this.canonicalizeContent(candidate.content),
           score: baseScore + layerBoost + sourceBoost + predictedBoost
         };
       })
-      .sort((a, b) => b.score - a.score)
-      .map(item => item.content);
+      .sort((a, b) => b.score - a.score);
+
+    const selected: string[] = [];
+    const seenCanonical = new Set<string>();
+    const selectedTerms: Set<string>[] = [];
+
+    for (const item of scored) {
+      if (seenCanonical.has(item.canonical)) continue;
+
+      const similarityPenalty = this.computeSelectionSimilarityPenalty(item.content, selectedTerms);
+      const adjustedScore = item.score - similarityPenalty;
+      if (adjustedScore <= 0.05) continue;
+
+      selected.push(item.content);
+      seenCanonical.add(item.canonical);
+      selectedTerms.push(this.extractSelectionTerms(item.content));
+    }
+
+    return selected;
   }
 
   private cachePredictedContexts(): void {
@@ -426,5 +445,32 @@ export class JITEngine {
     }
     if (options.role) bits.push(`role=${options.role}`);
     return bits.join(', ');
+  }
+
+  private canonicalizeContent(content: string): string {
+    return content.toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  private extractSelectionTerms(content: string): Set<string> {
+    return new Set(
+      content
+        .toLowerCase()
+        .split(/[^a-z0-9_+#]+/)
+        .filter(term => term.length > 2)
+    );
+  }
+
+  private computeSelectionSimilarityPenalty(content: string, selectedTerms: Set<string>[]): number {
+    if (selectedTerms.length === 0) return 0;
+    const currentTerms = this.extractSelectionTerms(content);
+    let maxSimilarity = 0;
+
+    for (const prior of selectedTerms) {
+      const intersection = [...currentTerms].filter(term => prior.has(term)).length;
+      const union = new Set([...currentTerms, ...prior]).size || 1;
+      maxSimilarity = Math.max(maxSimilarity, intersection / union);
+    }
+
+    return maxSimilarity * 0.2;
   }
 }
