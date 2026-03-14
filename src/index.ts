@@ -23,6 +23,13 @@ import { validateMessage, sanitizeMessage } from "./validation/schemas";
 type GatewayMethodHandler = (params?: Record<string, any>) => Promise<any>;
 type ToolHandler = (args?: Record<string, any>) => Promise<any>;
 
+const MEMORY_CONTEXT_GUIDANCE = [
+  "## Memory Context Recall",
+  "Before answering questions about prior work, decisions, dates, preferences, ongoing tasks, or historical context, use memory-context recall/search first.",
+  "Prefer memory_context.search for ranked recall and memory_context_recall for time-windowed recovery.",
+  "If memory retrieval is empty or low-confidence, say you checked the memory layer.",
+].join("\n");
+
 export class MemoryContextPlugin {
   private factory: MemoryContextFactory;
   private stateStore: PluginStateStore;
@@ -273,9 +280,16 @@ export class MemoryContextPlugin {
         if (!this.initialized) await this.initialize();
         return {
           initialized: this.initialized,
+          plugin: {
+            id: 'memory-context',
+            guidanceEnabled: true,
+            operatorCommand: '/memorycontext',
+            statePath: this.stateStore.getPath()
+          },
           storage: this.factory.getStorage().getTierStats(),
           history: this.factory.getHistory().getStats(),
           engine: this.factory.getEngine().getRuntimeStats(),
+          anchors: this.factory.getImmunity().exportAnchors(),
           statePath: this.stateStore.getPath()
         };
       },
@@ -511,6 +525,54 @@ export const memoryContextPlugin = {
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
       }, { optional: true });
+    }
+
+    if (api.on) {
+      api.on("before_prompt_build", async () => ({
+        prependSystemContext: MEMORY_CONTEXT_GUIDANCE,
+      }));
+    }
+
+    if (api.registerCommand) {
+      api.registerCommand({
+        name: "memorycontext",
+        description: "Show memory-context runtime status and recall guidance.",
+        acceptsArgs: true,
+        handler: async (ctx: any) => {
+          const action = ctx.args?.trim().toLowerCase() || "status";
+          if (action === "status") {
+            const status = await plugin.invokeGatewayMethod("memory_context.status");
+            return {
+              text: [
+                "Memory Context status:",
+                `- initialized: ${status.initialized}`,
+                `- state path: ${status.plugin.statePath}`,
+                `- indexed candidates: ${status.engine.indexedCandidates}`,
+                `- predictor history: ${status.engine.predictor.historyLength}`,
+                `- has context: ${status.engine.hasContext}`,
+                `- raw anchors: ${status.anchors.raw.length}`,
+                `- typed anchors: ${status.anchors.typed.length}`,
+                "",
+                "Use memory_context.search for ranked recall and memory_context_recall for time-windowed recall.",
+              ].join("\n"),
+            };
+          }
+
+          if (action === "help") {
+            return {
+              text: [
+                "Memory Context commands:",
+                "/memorycontext status",
+                "/memorycontext help",
+                "",
+                "Tools: memory_context_search, memory_context_recall, memory_context_anchor, memory_context_snapshot, memory_context_restore",
+              ].join("\n"),
+            };
+          }
+
+          return { text: "Unknown subcommand. Try /memorycontext help" };
+        },
+      });
     }
 
     if (api.registerCli && api.runtime?.tools?.registerMemoryCli) {
