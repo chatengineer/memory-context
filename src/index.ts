@@ -316,6 +316,32 @@ export class MemoryContextPlugin {
     return handler(args);
   }
 
+  async getCommandSnapshot(action: string = 'status'): Promise<string> {
+    const status = await this.invokeGatewayMethod('memory_context.status');
+    if (action === 'help') {
+      return [
+        'Memory Context commands:',
+        '/memorycontext status',
+        '/memorycontext help',
+        '',
+        'Tools: memory_context_search, memory_context_recall, memory_context_anchor, memory_context_snapshot, memory_context_restore'
+      ].join('\n');
+    }
+
+    return [
+      'Memory Context status:',
+      `- initialized: ${status.initialized}`,
+      `- state path: ${status.plugin.statePath}`,
+      `- indexed candidates: ${status.engine.indexedCandidates}`,
+      `- predictor history: ${status.engine.predictor.historyLength}`,
+      `- has context: ${status.engine.hasContext}`,
+      `- raw anchors: ${status.anchors.raw.length}`,
+      `- typed anchors: ${status.anchors.typed.length}`,
+      '',
+      'Use memory_context.search for ranked recall and memory_context_recall for time-windowed recall.'
+    ].join('\n');
+  }
+
   getGatewayMethods(): Record<string, GatewayMethodHandler> {
     return {
       'memory_context.status': async () => {
@@ -596,6 +622,38 @@ export const memoryContextPlugin = {
 
     if (api.registerHttpRoute) {
       api.registerHttpRoute({
+        path: "/plugins/memory-context/view",
+        auth: "plugin",
+        match: "exact",
+        handler: async (_req: any, res: any) => {
+          const status = await plugin.invokeGatewayMethod("memory_context.status");
+          const diff = await plugin.invokeTool("memory_context_diff");
+          const commandSnapshot = await plugin.getCommandSnapshot('status');
+          const helpSnapshot = await plugin.getCommandSnapshot('help');
+          const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>memory-context status</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#0b1020;color:#e8ecf3}
+.card{background:#131a2a;border:1px solid #2a3550;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1rem}
+pre{white-space:pre-wrap;word-break:break-word;background:#0d1322;padding:1rem;border-radius:8px;overflow:auto}
+code{color:#9bd1ff}
+h1,h2{margin:0 0 .75rem 0} .muted{color:#9aa6bf}
+</style></head><body>
+<h1>memory-context</h1>
+<p class="muted">Operator status page</p>
+<div class="card"><h2>Command snapshot</h2><pre>${commandSnapshot.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!))}</pre></div>
+<div class="card"><h2>Help snapshot</h2><pre>${helpSnapshot.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!))}</pre></div>
+<div class="card"><h2>Status JSON</h2><pre>${JSON.stringify(status, null, 2).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!))}</pre></div>
+<div class="card"><h2>Context diff</h2><pre>${JSON.stringify(diff, null, 2).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!))}</pre></div>
+</body></html>`;
+          res.statusCode = 200;
+          res.setHeader("content-type", "text/html; charset=utf-8");
+          res.end(html);
+          return true;
+        },
+      });
+
+      api.registerHttpRoute({
         path: "/plugins/memory-context",
         auth: "plugin",
         match: "prefix",
@@ -607,11 +665,16 @@ export const memoryContextPlugin = {
             engine: status.engine,
             history: status.history,
             storage: status.storage,
-            diff: plugin.getToolHandlers().memory_context_diff ? await plugin.invokeTool("memory_context_diff") : null
+            diff: plugin.getToolHandlers().memory_context_diff ? await plugin.invokeTool("memory_context_diff") : null,
+            commandSnapshots: {
+              status: await plugin.getCommandSnapshot('status'),
+              help: await plugin.getCommandSnapshot('help')
+            }
           };
           res.statusCode = 200;
           res.setHeader("content-type", "application/json; charset=utf-8");
           res.end(JSON.stringify(payload, null, 2));
+          return true;
         },
       });
     }
@@ -624,33 +687,11 @@ export const memoryContextPlugin = {
         handler: async (ctx: any) => {
           const action = ctx.args?.trim().toLowerCase() || "status";
           if (action === "status") {
-            const status = await plugin.invokeGatewayMethod("memory_context.status");
-            return {
-              text: [
-                "Memory Context status:",
-                `- initialized: ${status.initialized}`,
-                `- state path: ${status.plugin.statePath}`,
-                `- indexed candidates: ${status.engine.indexedCandidates}`,
-                `- predictor history: ${status.engine.predictor.historyLength}`,
-                `- has context: ${status.engine.hasContext}`,
-                `- raw anchors: ${status.anchors.raw.length}`,
-                `- typed anchors: ${status.anchors.typed.length}`,
-                "",
-                "Use memory_context.search for ranked recall and memory_context_recall for time-windowed recall.",
-              ].join("\n"),
-            };
+            return { text: await plugin.getCommandSnapshot('status') };
           }
 
           if (action === "help") {
-            return {
-              text: [
-                "Memory Context commands:",
-                "/memorycontext status",
-                "/memorycontext help",
-                "",
-                "Tools: memory_context_search, memory_context_recall, memory_context_anchor, memory_context_snapshot, memory_context_restore",
-              ].join("\n"),
-            };
+            return { text: await plugin.getCommandSnapshot('help') };
           }
 
           return { text: "Unknown subcommand. Try /memorycontext help" };

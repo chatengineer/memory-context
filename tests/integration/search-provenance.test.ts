@@ -12,7 +12,13 @@ describe('memory-context search provenance', () => {
     expect(results[0].explanation).toContain('sqlite-native retrieval');
     expect((results[0].metadata as any)?.provenance).toMatchObject({
       backend: 'sqlite',
-      ranking: 'recency-filtered-like-match'
+      ranking: 'recency-filtered-like-match',
+      scoreBreakdown: {
+        bm25: expect.any(Number),
+        heuristic: expect.any(Number),
+        filter: expect.any(Number),
+        final: expect.any(Number)
+      }
     });
 
     await plugin.onUnload();

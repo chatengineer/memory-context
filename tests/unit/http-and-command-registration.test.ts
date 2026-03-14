@@ -21,6 +21,9 @@ describe('memory-context command and HTTP registration', () => {
 
     expect(registerCommand).toHaveBeenCalledWith(expect.objectContaining({ name: 'memorycontext' }));
     expect(registerHttpRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/plugins/memory-context/view', auth: 'plugin', match: 'exact' })
+    );
+    expect(registerHttpRoute).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/plugins/memory-context', auth: 'plugin', match: 'prefix' })
     );
   });

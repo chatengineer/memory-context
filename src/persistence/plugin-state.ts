@@ -32,6 +32,12 @@ export interface SqliteSearchRow {
     backend: 'sqlite';
     filters: Record<string, unknown>;
     ranking: 'recency-filtered-like-match';
+    scoreBreakdown?: {
+      bm25: number;
+      heuristic: number;
+      filter: number;
+      final: number;
+    };
   };
 }
 
@@ -389,6 +395,13 @@ export class PluginStateStore {
       const matchedTerms = loweredQuery
         ? loweredQuery.split(/\s+/).filter(Boolean).filter(term => loweredContent.includes(term))
         : [];
+      const bm25Component = matchedTerms.length / Math.max(1, loweredQuery.split(/\s+/).filter(Boolean).length || 1);
+      const recencyComponent = typeof metadata.timestamp === 'number' && metadata.timestamp > 0
+        ? 1
+        : 0.5;
+      const filterComponent = 1;
+      const heuristicComponent = Number(((bm25Component * 0.65) + (recencyComponent * 0.35)).toFixed(4));
+      const finalComponent = Number((heuristicComponent * filterComponent).toFixed(4));
       return {
         id: String(row.id),
         content: String(row.content),
@@ -401,7 +414,10 @@ export class PluginStateStore {
           query ? `content like "${query}"` : 'no-text-filter',
           options.source ? `source=${options.source}` : null,
           options.role ? `role=${options.role}` : null,
-          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
+          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null,
+          `bm25=${bm25Component.toFixed(4)}`,
+          `heuristic=${heuristicComponent.toFixed(4)}`,
+          `filter=${filterComponent.toFixed(4)}`
         ].filter(Boolean).join(', '),
         matchedTerms,
         provenance: {
@@ -414,7 +430,13 @@ export class PluginStateStore {
             until: options.until ?? null,
             limit: options.limit || 10
           },
-          ranking: 'recency-filtered-like-match'
+          ranking: 'recency-filtered-like-match',
+          scoreBreakdown: {
+            bm25: Number(bm25Component.toFixed(4)),
+            heuristic: heuristicComponent,
+            filter: filterComponent,
+            final: finalComponent
+          }
         }
       };
     });
@@ -468,7 +490,10 @@ export class PluginStateStore {
           'sqlite-native recall',
           options.source ? `source=${options.source}` : null,
           options.role ? `role=${options.role}` : null,
-          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
+          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null,
+          'bm25=0.0000',
+          'heuristic=1.0000',
+          'filter=1.0000'
         ].filter(Boolean).join(', '),
         matchedTerms: [],
         provenance: {
@@ -481,7 +506,13 @@ export class PluginStateStore {
             until: options.until ?? null,
             limit: options.limit || 50
           },
-          ranking: 'recency-filtered-like-match'
+          ranking: 'recency-filtered-like-match',
+          scoreBreakdown: {
+            bm25: 0,
+            heuristic: 1,
+            filter: 1,
+            final: 1
+          }
         }
       };
     });
