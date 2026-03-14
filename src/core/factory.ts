@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: MemoryContextConfig = {
   quantumAnchorsEnabled: true,
   persistenceEnabled: true,
   predictiveAssemblyEnabled: true,
-  statePath: '.openclaw/memory-context/plugin-state.json'
+  statePath: '.openclaw/memory-context/plugin-state.db'
 };
 
 /**

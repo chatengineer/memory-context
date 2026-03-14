@@ -19,6 +19,9 @@ import { validateMessage, sanitizeMessage } from "./validation/schemas";
  * MemoryContextPlugin – registers with OpenClaw and manages context lifecycle.
  * Uses the Factory pattern for proper async initialization.
  */
+type GatewayMethodHandler = (params?: Record<string, any>) => Promise<any>;
+type ToolHandler = (args?: Record<string, any>) => Promise<any>;
+
 export class MemoryContextPlugin {
   private factory: MemoryContextFactory;
   private stateStore: PluginStateStore;
@@ -68,6 +71,7 @@ export class MemoryContextPlugin {
   async onUnload(): Promise<void> {
     defaultLogger.info("Plugin unloaded – cleaning up", { component: "memory-context" });
     await this.persistState();
+    await this.stateStore.close();
     await this.factory.reset();
     this.initialized = false;
   }
@@ -102,6 +106,11 @@ export class MemoryContextPlugin {
         ? Layer.L1
         : Layer.L0;
     hierarchy.addContent(targetLayer, sanitized.content);
+    await engine.recordMessage(storedMessageId, sanitized.content, {
+      ...sanitized,
+      timestamp: sanitized.timestamp || Date.now(),
+      role: sanitized.role
+    }, targetLayer);
 
     if (sanitized.role === 'system') {
       immunity.addDecisionAnchor(
@@ -183,6 +192,112 @@ export class MemoryContextPlugin {
       return;
     }
     await this.restoreState();
+  }
+
+  async invokeGatewayMethod(method: string, params: Record<string, any> = {}): Promise<any> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    const handlers = this.getGatewayMethods();
+    const handler = handlers[method];
+    if (!handler) {
+      throw new Error(`Unsupported gateway method: ${method}`);
+    }
+    return handler(params);
+  }
+
+  async invokeTool(name: string, args: Record<string, any> = {}): Promise<any> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    const handlers = this.getToolHandlers();
+    const handler = handlers[name];
+    if (!handler) {
+      throw new Error(`Unsupported tool: ${name}`);
+    }
+    return handler(args);
+  }
+
+  getGatewayMethods(): Record<string, GatewayMethodHandler> {
+    return {
+      'memory_context.status': async () => {
+        if (!this.initialized) await this.initialize();
+        return {
+          initialized: this.initialized,
+          storage: this.factory.getStorage().getTierStats(),
+          history: this.factory.getHistory().getStats(),
+          engine: this.factory.getEngine().getRuntimeStats(),
+          statePath: this.stateStore.getPath()
+        };
+      },
+      'memory_context.build': async (params) => this.factory.getEngine().buildContext(params?.message || params?.triggerMessage || params?.content || ''),
+      'memory_context.jit_build': async (params) => this.factory.getEngine().buildContext(params?.message || params?.triggerMessage || params?.content || ''),
+      'memory_context.jit_stats': async () => this.factory.getEngine().getRuntimeStats(),
+      'memory_context.jit_clear': async () => {
+        await this.factory.getHistory().clear();
+        for (const layer of [Layer.L0, Layer.L1, Layer.L2, Layer.L3, Layer.L4]) {
+          this.factory.getHierarchy().clearLayer(layer);
+        }
+        this.factory.getImmunity().clearTypedAnchors();
+        await this.factory.getEngine().clearRuntimeState();
+        await this.stateStore.clear();
+        return { ok: true };
+      },
+      'memory_context.shift_detect': async () => ({
+        anchors: this.factory.getImmunity().exportAnchors(),
+        hasContext: Boolean(this.factory.getEngine().getLastContext())
+      }),
+      'memory_context.validate': async (params) => validateMessage(params?.message || params),
+      'memory_context.history': async (params) => {
+        const messages = await this.factory.getHistory().getAllMessages();
+        const limit = typeof params?.limit === 'number' ? params.limit : messages.length;
+        return messages.slice(-limit);
+      },
+      'memory_context.search': async (params) => {
+        const query = params?.query || params?.text || '';
+        const limit = params?.limit || 10;
+        if (params?.storage) {
+          return this.searchStorage(query, params);
+        }
+        return this.searchMemory(query, limit);
+      },
+      'memory_context.anchor': async (params) => {
+        const immunity = this.factory.getImmunity();
+        const action = params?.action || 'list';
+        if (action === 'list') return immunity.exportAnchors();
+        if (action === 'remove') return { removed: immunity.removeAnchor(params?.id || params?.anchor) };
+        if (action === 'add') {
+          const type = params?.type || 'raw';
+          if (type === 'decision') return immunity.addDecisionAnchor(params?.decision || params?.content, params?.rationale || 'manual anchor');
+          if (type === 'state') return immunity.addStateAnchor(params?.key, params?.value, params?.previousValue);
+          if (type === 'reference') return immunity.addReferenceAnchor(params?.referenceType || 'document', params?.reference, params?.title);
+          if (type === 'custom') return immunity.addCustomAnchor(params?.customType || 'custom', params?.data || {}, params?.content);
+          immunity.addAnchor(params?.content || params?.anchor || '');
+          return { ok: true };
+        }
+        throw new Error(`Unsupported anchor action: ${action}`);
+      }
+    };
+  }
+
+  getToolHandlers(): Record<string, ToolHandler> {
+    return {
+      memory_context_build: async (args) => this.invokeGatewayMethod('memory_context.build', args),
+      memory_context_stats: async () => this.invokeGatewayMethod('memory_context.status'),
+      memory_context_search: async (args) => this.invokeGatewayMethod('memory_context.search', args),
+      memory_context_anchor: async (args) => this.invokeGatewayMethod('memory_context.anchor', args),
+      memory_context_jit_build: async (args) => this.invokeGatewayMethod('memory_context.jit_build', args),
+      memory_context_jit_clear: async () => this.invokeGatewayMethod('memory_context.jit_clear'),
+      memory_context_shift_check: async () => this.invokeGatewayMethod('memory_context.shift_detect'),
+      memory_context_diff: async () => ({ lastContext: this.factory.getEngine().getLastContext() }),
+      memory_context_history: async (args) => this.invokeGatewayMethod('memory_context.history', args),
+      memory_context_recall: async (args) => this.recallMemory(args?.ids || []),
+      memory_context_profile: async () => this.factory.getEngine().getPredictor().getPatterns(),
+      memory_context_validate: async (args) => this.invokeGatewayMethod('memory_context.validate', args),
+      memory_context_snapshot: async () => { await this.snapshot(); return { ok: true, path: this.stateStore.getPath() }; },
+      memory_context_restore: async () => { await this.restore(); return { ok: true, path: this.stateStore.getPath() }; },
+      memory_context_optimize: async () => ({ predictor: this.factory.getEngine().getPredictor().getStats(), storage: this.factory.getStorage().getTierStats() })
+    };
   }
 
   /** Check if initialized */

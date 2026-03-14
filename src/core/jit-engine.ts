@@ -18,7 +18,7 @@ interface JITCandidate {
   id: string;
   content: string;
   metadata?: Metadata;
-  source: 'history' | 'hierarchy' | 'predicted';
+  source: 'history' | 'hierarchy';
   layer?: number;
 }
 
@@ -27,17 +27,9 @@ export interface MemorySearchResult {
   score: number;
   content: string;
   metadata?: Metadata;
-  source: JITCandidate['source'];
+  source: 'history' | 'hierarchy';
 }
 
-/**
- * JITEngine – Just‑In‑Time context assembler
- *
- * - No compaction: always rebuilds from the complete source (full history + hierarchy).
- * - Zero‑shift mode: each call starts from a clean slate, but shift‑immune anchors are re‑injected.
- * - Query-aware scoring: uses BM25 + advanced relevance factors when a trigger message is available.
- * - Predictive assembly: learns topic transitions and pre-ranks likely future contexts.
- */
 export class JITEngine {
   private hierarchy: HierarchicalContext;
   private immunity: ShiftImmunity;
@@ -46,8 +38,8 @@ export class JITEngine {
   private relevanceFn: (content: string, metadata?: Metadata, context?: ScoringContext) => number;
   private advancedScorer: AdvancedRelevanceScorer;
   private predictor: PredictiveAssembler;
-  private zeroShift: boolean = false;
-  private lastContext: string = '';
+  private zeroShift = false;
+  private lastContext = '';
   private retrievalIndex: BM25Index = new BM25Index();
   private retrievalCandidates: Map<string, JITCandidate> = new Map();
 
@@ -84,37 +76,72 @@ export class JITEngine {
     return this.predictor.analyzeMessage(messageId, content);
   }
 
+  async recordMessage(
+    messageId: string,
+    content: string,
+    metadata?: Metadata,
+    layer?: number
+  ): Promise<void> {
+    this.upsertCandidate({
+      id: messageId,
+      content,
+      metadata: { ...(metadata || {}), id: messageId, source: 'history' },
+      source: 'history'
+    });
+
+    if (typeof layer === 'number') {
+      this.upsertCandidate({
+        id: `hierarchy:${layer}:${messageId}`,
+        content,
+        metadata: { ...(metadata || {}), id: `hierarchy:${layer}:${messageId}`, layer, source: 'hierarchy' },
+        source: 'hierarchy',
+        layer
+      });
+    }
+  }
+
+  async clearRuntimeState(): Promise<void> {
+    this.lastContext = '';
+    this.retrievalIndex.clear();
+    this.retrievalCandidates.clear();
+    this.predictor.reset();
+  }
+
   async buildContext(triggerMessage: any): Promise<string> {
+    await this.ensureSeeded();
+
     const anchors = this.immunity.getAnchors();
     const query = this.extractTriggerContent(triggerMessage);
-    const fullHistory = await this.history.getAllMessages();
-    const candidates = this.collectCandidates(fullHistory);
-
-    this.refreshRetrievalIndex(candidates);
-
+    const candidates = Array.from(this.retrievalCandidates.values());
     const rankedContents = this.rankCandidates(candidates, query, anchors);
     const budgeted = this.budget.applyBudget(rankedContents);
     const finalContext = [...anchors, ...budgeted.selected].join('\n\n');
 
     this.lastContext = finalContext;
-    this.cachePredictedContexts(candidates);
+    this.cachePredictedContexts();
     return finalContext;
   }
 
-  search(query: string, limit: number = 10): MemorySearchResult[] {
+  async search(query: string, limit: number = 10): Promise<MemorySearchResult[]> {
+    await this.ensureSeeded();
     if (!query.trim()) return [];
 
     const results = this.retrievalIndex.search(query, limit);
-    return results.map(result => {
+    const mapped: MemorySearchResult[] = [];
+
+    for (const result of results) {
       const candidate = this.retrievalCandidates.get(result.id);
-      return {
+      if (!candidate) continue;
+      mapped.push({
         id: result.id,
         score: result.score,
-        content: candidate?.content || '',
-        metadata: candidate?.metadata,
-        source: candidate?.source || 'history'
-      };
-    }).filter(result => result.content);
+        content: candidate.content,
+        metadata: candidate.metadata,
+        source: candidate.source
+      });
+    }
+
+    return mapped;
   }
 
   recall(ids: string[]): MemorySearchResult[] {
@@ -142,7 +169,7 @@ export class JITEngine {
     };
   }
 
-  importState(data: Partial<ReturnType<JITEngine['exportState']>>): void {
+  importState(data: Partial<ReturnType<JITEngine['exportState']>> & { predictor?: ReturnType<PredictiveAssembler['export']> }): void {
     if (data.lastContext) {
       this.lastContext = data.lastContext;
     }
@@ -155,7 +182,7 @@ export class JITEngine {
           id,
           content: doc.content,
           metadata: doc.metadata,
-          source: (doc.metadata?.source as JITCandidate['source']) || 'history',
+          source: (doc.metadata?.source as 'history' | 'hierarchy') || 'history',
           layer: typeof doc.metadata?.layer === 'number' ? doc.metadata.layer : undefined
         });
       }
@@ -166,25 +193,35 @@ export class JITEngine {
     }
   }
 
+  getRuntimeStats(): {
+    indexedCandidates: number;
+    predictor: ReturnType<PredictiveAssembler['getStats']>;
+    hasContext: boolean;
+  } {
+    return {
+      indexedCandidates: this.retrievalCandidates.size,
+      predictor: this.predictor.getStats(),
+      hasContext: Boolean(this.lastContext)
+    };
+  }
+
   private extractTriggerContent(triggerMessage: any): string {
     if (typeof triggerMessage === 'string') return triggerMessage;
     if (triggerMessage && typeof triggerMessage.content === 'string') return triggerMessage.content;
     return '';
   }
 
-  private collectCandidates(historyMessages: Array<{ id?: string; content: string; timestamp?: number; [key: string]: any }>): JITCandidate[] {
-    const candidates: JITCandidate[] = [];
-    const seenContent = new Set<string>();
+  private async ensureSeeded(): Promise<void> {
+    if (this.retrievalCandidates.size > 0) return;
 
     const layers = this.hierarchy.getAllLayers();
     for (let layerIndex = layers.length - 1; layerIndex >= 0; layerIndex--) {
       const bucket = layers[layerIndex] ?? [];
       for (let itemIndex = 0; itemIndex < bucket.length; itemIndex++) {
         const content = bucket[itemIndex];
-        if (!content || seenContent.has(content)) continue;
-        seenContent.add(content);
-        candidates.push({
-          id: `hierarchy:${layerIndex}:${itemIndex}`,
+        if (!content) continue;
+        this.upsertCandidate({
+          id: `hierarchy:${layerIndex}:seed:${itemIndex}`,
           content,
           metadata: { layer: layerIndex, timestamp: Date.now(), source: 'hierarchy' },
           source: 'hierarchy',
@@ -193,16 +230,16 @@ export class JITEngine {
       }
     }
 
-    for (let i = 0; i < historyMessages.length; i++) {
-      const message = historyMessages[i];
-      if (!message?.content || seenContent.has(message.content)) continue;
-      seenContent.add(message.content);
-      candidates.push({
-        id: message.id || `history:${i}`,
+    const fullHistory = await this.history.getAllMessages();
+    for (let i = 0; i < fullHistory.length; i++) {
+      const message = fullHistory[i];
+      if (!message?.content) continue;
+      this.upsertCandidate({
+        id: message.id || `history:seed:${i}`,
         content: message.content,
         metadata: {
           ...message,
-          id: message.id || `history:${i}`,
+          id: message.id || `history:seed:${i}`,
           timestamp: message.timestamp || Date.now(),
           role: message.role,
           source: 'history'
@@ -210,40 +247,10 @@ export class JITEngine {
         source: 'history'
       });
     }
-
-    const predictedContexts = this.predictor.predictNextContexts();
-    for (const prediction of predictedContexts) {
-      for (const result of this.recall(prediction.contextIds)) {
-        if (seenContent.has(result.content)) continue;
-        seenContent.add(result.content);
-        candidates.push({
-          id: `predicted:${result.id}:${prediction.topic}`,
-          content: result.content,
-          metadata: {
-            ...(result.metadata || {}),
-            predictedTopic: prediction.topic,
-            predictedProbability: prediction.probability,
-            source: 'predicted'
-          },
-          source: 'predicted'
-        });
-      }
-    }
-
-    return candidates;
   }
 
   private rankCandidates(candidates: JITCandidate[], query: string, anchors: string[]): string[] {
     if (candidates.length === 0) return [];
-
-    const bm25Index = new BM25Index();
-    for (const candidate of candidates) {
-      bm25Index.addDocument({
-        id: candidate.id,
-        content: candidate.content,
-        metadata: candidate.metadata
-      });
-    }
 
     const predictedIds = new Map<string, number>();
     for (const prediction of this.predictor.predictNextContexts()) {
@@ -256,7 +263,7 @@ export class JITEngine {
       query: query || undefined,
       currentContext: anchors,
       referenceTime: Date.now(),
-      bm25Index
+      bm25Index: this.retrievalIndex
     };
 
     const batchScores = this.advancedScorer.computeBatchScores(
@@ -273,7 +280,7 @@ export class JITEngine {
         const layerBoost = candidate.source === 'hierarchy'
           ? Math.max(0, ((candidate.layer ?? 0) + 1) * 0.03)
           : 0;
-        const sourceBoost = candidate.source === 'history' ? 0.02 : candidate.source === 'predicted' ? 0.08 : 0;
+        const sourceBoost = candidate.source === 'history' ? 0.02 : 0.03;
         const predictedBoost = predictedIds.get(candidate.id) || 0;
 
         return {
@@ -285,29 +292,22 @@ export class JITEngine {
       .map(item => item.content);
   }
 
-  private refreshRetrievalIndex(candidates: JITCandidate[]): void {
-    this.retrievalIndex.clear();
-    this.retrievalCandidates.clear();
-
-    for (const candidate of candidates) {
-      this.retrievalCandidates.set(candidate.id, candidate);
-      this.retrievalIndex.addDocument({
-        id: candidate.id,
-        content: candidate.content,
-        metadata: candidate.metadata
+  private cachePredictedContexts(): void {
+    for (const prediction of this.predictor.predictNextContexts()) {
+      this.predictor.preAssembleContext(prediction.topic, () => {
+        return this.recall(prediction.contextIds)
+          .map(result => result.content)
+          .join('\n\n');
       });
     }
   }
 
-  private cachePredictedContexts(candidates: JITCandidate[]): void {
-    const candidateMap = new Map(candidates.map(candidate => [candidate.id, candidate]));
-    for (const prediction of this.predictor.predictNextContexts()) {
-      this.predictor.preAssembleContext(prediction.topic, () => {
-        return prediction.contextIds
-          .map(id => candidateMap.get(id)?.content)
-          .filter((content): content is string => Boolean(content))
-          .join('\n\n');
-      });
-    }
+  private upsertCandidate(candidate: JITCandidate): void {
+    this.retrievalCandidates.set(candidate.id, candidate);
+    this.retrievalIndex.addDocument({
+      id: candidate.id,
+      content: candidate.content,
+      metadata: candidate.metadata
+    });
   }
 }
