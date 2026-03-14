@@ -381,6 +381,9 @@ export class JITEngine {
       selected.push(item.content);
       seenCanonical.add(item.canonical);
       selectedTerms.push(this.extractSelectionTerms(item.content));
+
+      const adaptive = this.advancedScorer.computeScore(item.content, item.candidate.metadata, scoringContext);
+      this.advancedScorer.recordSelectionOutcome(adaptive, true);
     }
 
     return selected;

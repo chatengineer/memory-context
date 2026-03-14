@@ -8,6 +8,7 @@
     "watch": "tsc -watch",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:smoke": "npm run build && node scripts/smoke-harness.mjs",
+    "benchmark": "npm run build && node scripts/benchmark-harness.mjs",
     "gateway:isolated": "bash scripts/run-isolated-gateway.sh"
   },
   "keywords": [

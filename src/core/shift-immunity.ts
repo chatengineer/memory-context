@@ -22,10 +22,12 @@ import {
 export class ShiftImmunity {
   private rawAnchors: Set<string>;
   private typedAnchors: Map<string, TypedAnchor>;
+  private semanticIndex: Map<string, string>;
 
   constructor() {
     this.rawAnchors = new Set<string>();
     this.typedAnchors = new Map<string, TypedAnchor>();
+    this.semanticIndex = new Map<string, string>();
 
     // Legacy sentinels: keep them stable for backwards compatibility.
     this.rawAnchors.add('[QUANTUM_ANCHOR_START]');
@@ -38,9 +40,17 @@ export class ShiftImmunity {
     this.rawAnchors.add(anchor.trim());
   }
 
-  /** Add or replace a typed anchor. */
+  /** Add or replace a typed anchor, deduplicating semantically identical anchors. */
   addTypedAnchor(anchor: TypedAnchor): TypedAnchor {
+    const semanticKey = this.getSemanticKey(anchor);
+    const existingId = this.semanticIndex.get(semanticKey);
+    if (existingId) {
+      const existing = this.typedAnchors.get(existingId);
+      if (existing) return existing;
+    }
+
     this.typedAnchors.set(anchor.id, anchor);
+    this.semanticIndex.set(semanticKey, anchor.id);
     return anchor;
   }
 
@@ -54,8 +64,7 @@ export class ShiftImmunity {
     }
   ): DecisionAnchor {
     const anchor = AnchorFactory.createDecision(decision, rationale, options);
-    this.addTypedAnchor(anchor);
-    return anchor;
+    return this.addTypedAnchor(anchor) as DecisionAnchor;
   }
 
   addStateAnchor(
@@ -65,8 +74,7 @@ export class ShiftImmunity {
     metadata?: Record<string, unknown>
   ): StateAnchor {
     const anchor = AnchorFactory.createState(key, value, previousValue, metadata);
-    this.addTypedAnchor(anchor);
-    return anchor;
+    return this.addTypedAnchor(anchor) as StateAnchor;
   }
 
   addReferenceAnchor(
@@ -76,8 +84,7 @@ export class ShiftImmunity {
     metadata?: Record<string, unknown>
   ): ReferenceAnchor {
     const anchor = AnchorFactory.createReference(referenceType, reference, title, metadata);
-    this.addTypedAnchor(anchor);
-    return anchor;
+    return this.addTypedAnchor(anchor) as ReferenceAnchor;
   }
 
   addCustomAnchor(
@@ -87,11 +94,14 @@ export class ShiftImmunity {
     metadata?: Record<string, unknown>
   ): CustomAnchor {
     const anchor = AnchorFactory.createCustom(customType, data, content, metadata);
-    this.addTypedAnchor(anchor);
-    return anchor;
+    return this.addTypedAnchor(anchor) as CustomAnchor;
   }
 
   removeAnchor(anchorIdOrContent: string): boolean {
+    const existing = this.typedAnchors.get(anchorIdOrContent);
+    if (existing) {
+      this.semanticIndex.delete(this.getSemanticKey(existing));
+    }
     const removedTyped = this.typedAnchors.delete(anchorIdOrContent);
     const removedRaw = this.rawAnchors.delete(anchorIdOrContent);
     return removedTyped || removedRaw;
@@ -99,6 +109,7 @@ export class ShiftImmunity {
 
   clearTypedAnchors(): void {
     this.typedAnchors.clear();
+    this.semanticIndex.clear();
   }
 
   /** Retrieve typed anchors in insertion order. */
@@ -137,11 +148,12 @@ export class ShiftImmunity {
     }
 
     this.typedAnchors.clear();
+    this.semanticIndex.clear();
     if (Array.isArray(data.typed)) {
       for (const candidate of data.typed) {
         const validated = AnchorFactory.validate(candidate);
         if (validated) {
-          this.typedAnchors.set(validated.id, validated);
+          this.addTypedAnchor(validated);
         }
       }
     }
@@ -154,5 +166,22 @@ export class ShiftImmunity {
       rawAnchors: this.rawAnchors.size,
       typedAnchors: this.typedAnchors.size
     });
+  }
+
+  private getSemanticKey(anchor: TypedAnchor): string {
+    switch (anchor.type) {
+      case 'decision':
+        return `decision:${this.normalize(anchor.decision)}::${this.normalize(anchor.rationale)}`;
+      case 'state':
+        return `state:${this.normalize(anchor.key)}::${JSON.stringify(anchor.value)}`;
+      case 'reference':
+        return `reference:${anchor.referenceType}:${this.normalize(anchor.reference)}::${this.normalize(anchor.title || '')}`;
+      case 'custom':
+        return `custom:${this.normalize(anchor.customType)}::${JSON.stringify(anchor.data)}`;
+    }
+  }
+
+  private normalize(value: string): string {
+    return value.toLowerCase().replace(/\s+/g, ' ').trim();
   }
 }
