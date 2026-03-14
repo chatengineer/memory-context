@@ -16,7 +16,7 @@ import { BudgetManager } from './budget-manager';
 import { FullHistory, fullHistory } from '../persistence/full-history';
 import { TieredStorage, tieredStorage } from '../persistence/tiered-storage';
 import { computeRelevanceScore } from '../heuristics/relevance';
-import { contextBuildBreaker } from '../utils/circuit-breaker';
+import { MemoryContextConfigSchema } from '../validation/schemas';
 import { defaultLogger } from '../observability/metrics';
 
 export interface MemoryContextConfig {
@@ -67,7 +67,8 @@ export class MemoryContextFactory {
   private _engine: JITEngine | null = null;
 
   constructor(config?: Partial<MemoryContextConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    const parsed = MemoryContextConfigSchema.parse({ ...DEFAULT_CONFIG, ...config });
+    this.config = parsed;
   }
 
   /**
@@ -122,8 +123,8 @@ export class MemoryContextFactory {
     this._hierarchy = new HierarchicalContext();
     this._immunity = new ShiftImmunity();
     this._budget = new BudgetManager(
-      this.config.maxContextTokens,
-      this.config.targetUtilization
+      this.config.targetUtilization,
+      this.config.maxContextTokens
     );
     
     // 4. Initialize JIT engine (depends on all above)

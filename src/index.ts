@@ -9,11 +9,9 @@ import {
 } from "./core/factory";
 import { JITEngine } from "./core/jit-engine";
 import { HierarchicalContext, Layer } from "./core/hierarchical-context";
-import { ShiftImmunity } from "./core/shift-immunity";
-import { BudgetManager } from "./core/budget-manager";
-import { computeRelevanceScore } from "./heuristics/relevance";
 import { FullHistory } from "./persistence/full-history";
 import { defaultLogger } from "./observability/metrics";
+import { validateMessage, sanitizeMessage } from "./validation/schemas";
 
 /**
  * MemoryContextPlugin – registers with OpenClaw and manages context lifecycle.
@@ -68,25 +66,49 @@ export class MemoryContextPlugin {
 
   /** Called on each incoming message (or turn) */
   async onMessage(message: any): Promise<void> {
-    // Ensure initialized
     if (!this.initialized) {
       await this.initialize();
     }
 
+    const validation = validateMessage(message);
+    if (!validation.success || !validation.data) {
+      defaultLogger.warn("Rejected invalid message", {
+        component: "memory-context",
+        errors: validation.errors
+      });
+      return;
+    }
+
+    const sanitized = sanitizeMessage(validation.data);
     const history = this.factory.getHistory();
     const hierarchy = this.factory.getHierarchy();
+    const immunity = this.factory.getImmunity();
     const engine = this.factory.getEngine();
 
-    // Persist the raw message for full-history JIT
-    await history.addMessage(message);
-    
-    // Optionally update hierarchical layers based on message metadata
-    hierarchy.addContent(Layer.L0, message.content);
-    
-    // Rebuild context for the next model call
-    await engine.buildContext(message);
-    
-    defaultLogger.info("Rebuilt context for next model call", { component: "memory-context" });
+    await history.addMessage(sanitized);
+
+    const targetLayer = sanitized.role === 'system'
+      ? Layer.L4
+      : sanitized.role === 'assistant'
+        ? Layer.L1
+        : Layer.L0;
+    hierarchy.addContent(targetLayer, sanitized.content);
+
+    if (sanitized.role === 'system') {
+      immunity.addDecisionAnchor(
+        sanitized.content.slice(0, 200),
+        'System message captured as a shift-immune directive',
+        { impact: 'high', metadata: { source: 'system-message' } }
+      );
+    }
+
+    await engine.buildContext(sanitized);
+
+    defaultLogger.info("Rebuilt context for next model call", {
+      component: "memory-context",
+      layer: targetLayer,
+      role: sanitized.role || 'unknown'
+    });
   }
 
   /** Called when the underlying model switches (e.g., Gemini to Claude) */
