@@ -15,6 +15,7 @@ import { CircuitBreaker, storageBreaker } from '../utils/circuit-breaker';
 import { generateSecureId } from '../utils/security';
 import { CompressionManager, compressionManager, CompressionAlgorithm } from '../utils/compression';
 import { defaultLogger } from '../observability/metrics';
+import { BM25Index } from '../search/bm25-index';
 import type { Database, SqlJsStatic } from 'sql.js';
 
 // Queue item for async demotion processing
@@ -100,6 +101,21 @@ export interface StoredMessage {
     algorithm: CompressionAlgorithm;
     originalSize: number;
   };
+}
+
+export interface StorageSearchOptions {
+  limit?: number;
+  tier?: 'L0' | 'L1' | 'L2' | 'all';
+  metadataFilters?: Record<string, unknown>;
+}
+
+export interface StorageSearchResult {
+  id: string;
+  score: number;
+  content: string;
+  tier: 'L0' | 'L1' | 'L2';
+  metadata?: Record<string, any>;
+  timestamp: number;
 }
 
 const DEFAULT_CONFIG: TieredStorageConfig = {
@@ -355,6 +371,64 @@ export class TieredStorage {
     messages.sort((a, b) => a.timestamp - b.timestamp);
 
     return messages;
+  }
+
+  async retrieveMany(ids: string[]): Promise<StoredMessage[]> {
+    const results: StoredMessage[] = [];
+    for (const id of ids) {
+      const message = await this.retrieve(id);
+      if (message) {
+        results.push(message);
+      }
+    }
+    return results;
+  }
+
+  async getMessagesByTier(tier: 'L0' | 'L1' | 'L2'): Promise<StoredMessage[]> {
+    const all = await this.getAllMessages();
+    return all.filter(message => message.tier === tier);
+  }
+
+  async search(query: string, options: StorageSearchOptions = {}): Promise<StorageSearchResult[]> {
+    const limit = options.limit || 10;
+    const requestedTier = options.tier || 'all';
+    const messages = await this.getAllMessages();
+    const filtered = messages.filter(message => {
+      if (requestedTier !== 'all' && message.tier !== requestedTier) {
+        return false;
+      }
+
+      if (!options.metadataFilters) {
+        return true;
+      }
+
+      return Object.entries(options.metadataFilters).every(([key, value]) => message.metadata?.[key] === value);
+    });
+
+    const index = new BM25Index();
+    for (const message of filtered) {
+      index.addDocument({
+        id: message.id,
+        content: message.content,
+        metadata: {
+          ...(message.metadata || {}),
+          tier: message.tier,
+          timestamp: message.timestamp
+        }
+      });
+    }
+
+    return index.search(query, limit).map(result => {
+      const message = filtered.find(item => item.id === result.id);
+      return {
+        id: result.id,
+        score: result.score,
+        content: message?.content || '',
+        tier: (message?.tier || 'L0') as 'L0' | 'L1' | 'L2',
+        metadata: message?.metadata,
+        timestamp: message?.timestamp || 0
+      };
+    }).filter(result => result.content);
   }
 
   /**

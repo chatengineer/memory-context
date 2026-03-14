@@ -65,6 +65,8 @@ export const MemoryContextConfigSchema = z.object({
   zeroShiftEnabled: z.boolean().default(true),
   quantumAnchorsEnabled: z.boolean().default(true),
   persistenceEnabled: z.boolean().default(true),
+  predictiveAssemblyEnabled: z.boolean().default(true),
+  statePath: z.string().optional(),
   tieredStorageConfig: TieredStorageConfigSchema.optional()
 });
 

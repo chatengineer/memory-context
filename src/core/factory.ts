@@ -25,6 +25,8 @@ export interface MemoryContextConfig {
   zeroShiftEnabled: boolean;
   quantumAnchorsEnabled: boolean;
   persistenceEnabled: boolean;
+  predictiveAssemblyEnabled?: boolean;
+  statePath?: string;
   tieredStorageConfig?: {
     l0MaxTokens?: number;
     l1MaxTokens?: number;
@@ -37,7 +39,9 @@ const DEFAULT_CONFIG: MemoryContextConfig = {
   targetUtilization: 0.95,       // 95% utilization with 5% safety margin
   zeroShiftEnabled: true,
   quantumAnchorsEnabled: true,
-  persistenceEnabled: true
+  persistenceEnabled: true,
+  predictiveAssemblyEnabled: true,
+  statePath: '.openclaw/memory-context/plugin-state.json'
 };
 
 /**
