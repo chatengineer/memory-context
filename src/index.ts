@@ -8,6 +8,7 @@ import {
   memoryContextFactory 
 } from "./core/factory";
 import { JITEngine, MemoryRecallOptions, MemorySearchOptions, MemorySearchResult } from "./core/jit-engine";
+import { Type } from "@sinclair/typebox";
 import { HierarchicalContext, Layer } from "./core/hierarchical-context";
 import { FullHistory } from "./persistence/full-history";
 import { pluginStateStore, PluginStateStore } from "./persistence/plugin-state";
@@ -97,8 +98,11 @@ export class MemoryContextPlugin {
     const immunity = this.factory.getImmunity();
     const engine = this.factory.getEngine();
 
+    const predictorBefore = engine.getPredictor().export();
+    const previousPrimaryTopic = predictorBefore.topicHistory[predictorBefore.topicHistory.length - 1];
+
     const storedMessageId = await history.addMessage(sanitized);
-    engine.analyzeMessage(storedMessageId, sanitized.content);
+    const extractedTopics = engine.analyzeMessage(storedMessageId, sanitized.content);
 
     const targetLayer = sanitized.role === 'system'
       ? Layer.L4
@@ -121,11 +125,18 @@ export class MemoryContextPlugin {
       await this.persistAnchors();
     }
 
-    await this.persistMessageMutation(storedMessageId, sanitized.content, targetLayer, {
-      ...sanitized,
-      timestamp: sanitized.timestamp || Date.now(),
-      role: sanitized.role
-    });
+    await this.persistMessageMutation(
+      storedMessageId,
+      sanitized.content,
+      targetLayer,
+      {
+        ...sanitized,
+        timestamp: sanitized.timestamp || Date.now(),
+        role: sanitized.role
+      },
+      extractedTopics,
+      previousPrimaryTopic
+    );
 
     await engine.buildContext(sanitized);
     await this.persistVolatileState();
@@ -169,6 +180,22 @@ export class MemoryContextPlugin {
     if (!this.initialized) {
       await this.initialize();
     }
+
+    const resolvedOptions: MemorySearchOptions = typeof options === 'number' ? { limit: options } : options;
+    const sqlRows = await this.stateStore.searchRetrievalCandidates(query, resolvedOptions);
+    if (sqlRows.length > 0) {
+      return sqlRows.map(row => ({
+        id: row.id,
+        score: 1,
+        content: row.content,
+        metadata: row.metadata,
+        source: row.source,
+        timestamp: row.timestamp,
+        explanation: row.explanation,
+        matchedTerms: query ? [query.toLowerCase()] : []
+      }));
+    }
+
     return this.factory.getEngine().search(query, options);
   }
 
@@ -183,6 +210,21 @@ export class MemoryContextPlugin {
     if (!this.initialized) {
       await this.initialize();
     }
+
+    const resolvedOptions: MemoryRecallOptions = Array.isArray(idsOrOptions) ? { ids: idsOrOptions } : idsOrOptions;
+    const sqlRows = await this.stateStore.recallRetrievalCandidates(resolvedOptions);
+    if (sqlRows.length > 0) {
+      return sqlRows.map(row => ({
+        id: row.id,
+        score: 1,
+        content: row.content,
+        metadata: row.metadata,
+        source: row.source,
+        timestamp: row.timestamp,
+        explanation: row.explanation
+      }));
+    }
+
     return this.factory.getEngine().recall(idsOrOptions);
   }
 
@@ -365,7 +407,9 @@ export class MemoryContextPlugin {
     messageId: string,
     content: string,
     layer: number,
-    metadata: Record<string, any>
+    metadata: Record<string, any>,
+    extractedTopics: string[] = [],
+    previousPrimaryTopic?: string
   ): Promise<void> {
     await this.stateStore.upsertHierarchyEntry({
       id: `hierarchy:${layer}:${messageId}`,
@@ -389,7 +433,13 @@ export class MemoryContextPlugin {
       metadata: { ...metadata, layer }
     });
 
-    await this.stateStore.savePredictiveState(this.factory.getEngine().getPredictor().export());
+    if (extractedTopics.length > 0) {
+      await this.stateStore.upsertMessageTopics(messageId, extractedTopics);
+      await this.stateStore.appendTopicHistory(extractedTopics[0]);
+      if (previousPrimaryTopic && previousPrimaryTopic !== extractedTopics[0]) {
+        await this.stateStore.incrementTransition(previousPrimaryTopic, extractedTopics[0]);
+      }
+    }
   }
 
   private async restoreState(): Promise<void> {
@@ -427,10 +477,48 @@ export class MemoryContextPlugin {
   }
 }
 
-declare function registerPlugin(plugin: any): void;
-
-// Register the plugin with OpenClaw (global registration function provided by the host)
-// This is a placeholder – the real API may differ.
-if (typeof registerPlugin === "function") {
-  registerPlugin(new MemoryContextPlugin());
+function createPluginRuntime(config?: Partial<MemoryContextConfig>) {
+  const plugin = new MemoryContextPlugin(config);
+  return plugin;
 }
+
+const memoryContextPlugin = {
+  id: "memory-context",
+  name: "Memory Context - Zero-Shift Context Engine",
+  kind: "memory",
+  register(api: any) {
+    const plugin = createPluginRuntime(api?.config);
+    const gatewayMethods = plugin.getGatewayMethods();
+    for (const [method, handler] of Object.entries(gatewayMethods)) {
+      api.registerGatewayMethod(method, async ({ params, respond }: any) => {
+        const result = await handler(params || {});
+        if (typeof respond === 'function') {
+          respond(true, result);
+          return;
+        }
+        return result;
+      });
+    }
+
+    const toolHandlers = plugin.getToolHandlers();
+    for (const [name, handler] of Object.entries(toolHandlers)) {
+      api.registerTool({
+        name,
+        description: `memory-context runtime tool: ${name}`,
+        parameters: Type.Object({}, { additionalProperties: true }),
+        async execute(_id: string, params: Record<string, any>) {
+          const result = await handler(params || {});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+      }, { optional: true });
+    }
+
+    if (api.registerCli && api.runtime?.tools?.registerMemoryCli) {
+      api.registerCli(({ program }: any) => {
+        api.runtime.tools.registerMemoryCli(program);
+      }, { commands: ["memory"] });
+    }
+  }
+};
+
+export default memoryContextPlugin;

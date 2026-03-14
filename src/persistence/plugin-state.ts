@@ -2,6 +2,7 @@ import { SQLitePersistence } from './sqlite-persistence';
 import { TypedAnchor } from '../core/typed-anchors';
 import { Metadata } from '../types';
 import { PredictiveAssembler } from '../core/predictive-assembly';
+import { MemoryRecallOptions, MemorySearchOptions } from '../core/jit-engine';
 
 export interface PersistedHierarchyEntry {
   id: string;
@@ -16,6 +17,16 @@ export interface PersistedRetrievalCandidate {
   source: 'history' | 'hierarchy';
   layer?: number;
   metadata?: Metadata;
+}
+
+export interface SqliteSearchRow {
+  id: string;
+  content: string;
+  source: 'history' | 'hierarchy';
+  layer?: number;
+  metadata?: Metadata;
+  timestamp?: number;
+  explanation?: string;
 }
 
 export interface NormalizedPluginState {
@@ -107,7 +118,7 @@ export class PluginStateStore {
 
     this.persistence.run(`
       CREATE TABLE IF NOT EXISTS predictor_topic_history (
-        position INTEGER PRIMARY KEY,
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
         topic TEXT NOT NULL
       )
     `);
@@ -130,6 +141,10 @@ export class PluginStateStore {
       )
     `);
 
+    this.persistence.run('CREATE INDEX IF NOT EXISTS idx_retrieval_source ON retrieval_candidates(source)');
+    this.persistence.run('CREATE INDEX IF NOT EXISTS idx_retrieval_layer ON retrieval_candidates(layer)');
+    this.persistence.run('CREATE INDEX IF NOT EXISTS idx_retrieval_updated ON retrieval_candidates(updated_at)');
+
     await this.persistence.save();
     this.initialized = true;
   }
@@ -138,7 +153,7 @@ export class PluginStateStore {
     await this.initialize();
 
     const metaRows = this.persistence.query('SELECT key, value FROM state_meta');
-    const meta = new Map(metaRows.map(row => [String(row.key), row.value === null ? null : String(row.value)]));
+    const meta = new Map(metaRows.map(row => [String(row.key), this.parseJson(row.value)]));
 
     const hierarchyEntries = this.persistence.query(
       'SELECT id, layer, content, metadata FROM hierarchy_entries ORDER BY layer ASC, updated_at ASC'
@@ -168,13 +183,12 @@ export class PluginStateStore {
     }));
 
     const predictive = this.loadPredictiveState();
-
     const hasAnyState = hierarchyEntries.length || rawAnchors.length || typedAnchors.length || retrievalCandidates.length || predictive;
     if (!hasAnyState && !meta.size) return null;
 
     return {
       version: meta.get('version') || undefined,
-      savedAt: meta.get('savedAt') ? Number(meta.get('savedAt')) : undefined,
+      savedAt: meta.get('savedAt') || undefined,
       lastContext: meta.get('lastContext') || undefined,
       hierarchyEntries,
       rawAnchors,
@@ -191,13 +205,6 @@ export class PluginStateStore {
       [key, value === undefined ? null : JSON.stringify(value), Date.now()]
     );
     await this.persistence.save();
-  }
-
-  async getMeta<T = unknown>(key: string): Promise<T | null> {
-    await this.initialize();
-    const rows = this.persistence.query('SELECT value FROM state_meta WHERE key = ?', [key]);
-    if (!rows.length) return null;
-    return this.parseJson(rows[0].value) as T | null;
   }
 
   async upsertHierarchyEntry(entry: PersistedHierarchyEntry): Promise<void> {
@@ -256,14 +263,7 @@ export class PluginStateStore {
     await this.initialize();
     this.persistence.run(
       'INSERT OR REPLACE INTO retrieval_candidates (id, content, source, layer, metadata, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [
-        candidate.id,
-        candidate.content,
-        candidate.source,
-        candidate.layer ?? null,
-        JSON.stringify(candidate.metadata || {}),
-        Date.now()
-      ]
+      [candidate.id, candidate.content, candidate.source, candidate.layer ?? null, JSON.stringify(candidate.metadata || {}), Date.now()]
     );
     await this.persistence.save();
   }
@@ -274,16 +274,39 @@ export class PluginStateStore {
     for (const candidate of candidates) {
       this.persistence.run(
         'INSERT INTO retrieval_candidates (id, content, source, layer, metadata, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        [
-          candidate.id,
-          candidate.content,
-          candidate.source,
-          candidate.layer ?? null,
-          JSON.stringify(candidate.metadata || {}),
-          Date.now()
-        ]
+        [candidate.id, candidate.content, candidate.source, candidate.layer ?? null, JSON.stringify(candidate.metadata || {}), Date.now()]
       );
     }
+    await this.persistence.save();
+  }
+
+  async appendTopicHistory(topic: string): Promise<void> {
+    await this.initialize();
+    this.persistence.run('INSERT INTO predictor_topic_history (topic) VALUES (?)', [topic]);
+    await this.persistence.save();
+  }
+
+  async upsertMessageTopics(messageId: string, topics: string[]): Promise<void> {
+    await this.initialize();
+    this.persistence.run('DELETE FROM predictor_message_topics WHERE message_id = ?', [messageId]);
+    topics.forEach((topic, index) => {
+      this.persistence.run(
+        'INSERT INTO predictor_message_topics (message_id, topic, topic_order) VALUES (?, ?, ?)',
+        [messageId, topic, index]
+      );
+    });
+    await this.persistence.save();
+  }
+
+  async incrementTransition(sourceTopic: string, targetTopic: string): Promise<void> {
+    await this.initialize();
+    this.persistence.run(
+      `INSERT INTO predictor_transitions (source_topic, target_topic, transition_count)
+       VALUES (?, ?, 1)
+       ON CONFLICT(source_topic, target_topic)
+       DO UPDATE SET transition_count = transition_count + 1`,
+      [sourceTopic, targetTopic]
+    );
     await this.persistence.save();
   }
 
@@ -293,12 +316,9 @@ export class PluginStateStore {
     this.persistence.run('DELETE FROM predictor_message_topics');
     this.persistence.run('DELETE FROM predictor_transitions');
 
-    state.topicHistory.forEach((topic, index) => {
-      this.persistence.run(
-        'INSERT INTO predictor_topic_history (position, topic) VALUES (?, ?)',
-        [index, topic]
-      );
-    });
+    for (const topic of state.topicHistory) {
+      this.persistence.run('INSERT INTO predictor_topic_history (topic) VALUES (?)', [topic]);
+    }
 
     state.messageTopics.forEach(([messageId, topics]) => {
       topics.forEach((topic, index) => {
@@ -321,18 +341,118 @@ export class PluginStateStore {
     await this.persistence.save();
   }
 
+  async searchRetrievalCandidates(query: string, options: MemorySearchOptions = {}): Promise<SqliteSearchRow[]> {
+    await this.initialize();
+    const clauses: string[] = ['1=1'];
+    const params: any[] = [];
+
+    if (query.trim()) {
+      clauses.push('LOWER(content) LIKE ?');
+      params.push(`%${query.toLowerCase()}%`);
+    }
+    if (options.source && options.source !== 'all') {
+      clauses.push('source = ?');
+      params.push(options.source);
+    }
+    if (options.role) {
+      clauses.push("json_extract(metadata, '$.role') = ?");
+      params.push(options.role);
+    }
+    if (options.since !== undefined) {
+      clauses.push("CAST(json_extract(metadata, '$.timestamp') AS INTEGER) >= ?");
+      params.push(options.since);
+    }
+    if (options.until !== undefined) {
+      clauses.push("CAST(json_extract(metadata, '$.timestamp') AS INTEGER) <= ?");
+      params.push(options.until);
+    }
+
+    const rows = this.persistence.query(
+      `SELECT id, content, source, layer, metadata
+       FROM retrieval_candidates
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY CAST(COALESCE(json_extract(metadata, '$.timestamp'), 0) AS INTEGER) DESC, updated_at DESC
+       LIMIT ?`,
+      [...params, options.limit || 10]
+    );
+
+    return rows.map(row => {
+      const metadata = this.parseJson(row.metadata) || {};
+      return {
+        id: String(row.id),
+        content: String(row.content),
+        source: String(row.source) as 'history' | 'hierarchy',
+        layer: row.layer === null || row.layer === undefined ? undefined : Number(row.layer),
+        metadata,
+        timestamp: typeof metadata.timestamp === 'number' ? metadata.timestamp : 0,
+        explanation: [
+          'sqlite-native retrieval',
+          query ? `content like "${query}"` : 'no-text-filter',
+          options.source ? `source=${options.source}` : null,
+          options.role ? `role=${options.role}` : null,
+          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
+        ].filter(Boolean).join(', ')
+      };
+    });
+  }
+
+  async recallRetrievalCandidates(options: MemoryRecallOptions = {}): Promise<SqliteSearchRow[]> {
+    await this.initialize();
+    const clauses: string[] = ['1=1'];
+    const params: any[] = [];
+
+    if (options.ids?.length) {
+      clauses.push(`id IN (${options.ids.map(() => '?').join(',')})`);
+      params.push(...options.ids);
+    }
+    if (options.source && options.source !== 'all') {
+      clauses.push('source = ?');
+      params.push(options.source);
+    }
+    if (options.role) {
+      clauses.push("json_extract(metadata, '$.role') = ?");
+      params.push(options.role);
+    }
+    if (options.since !== undefined) {
+      clauses.push("CAST(json_extract(metadata, '$.timestamp') AS INTEGER) >= ?");
+      params.push(options.since);
+    }
+    if (options.until !== undefined) {
+      clauses.push("CAST(json_extract(metadata, '$.timestamp') AS INTEGER) <= ?");
+      params.push(options.until);
+    }
+
+    const rows = this.persistence.query(
+      `SELECT id, content, source, layer, metadata
+       FROM retrieval_candidates
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY CAST(COALESCE(json_extract(metadata, '$.timestamp'), 0) AS INTEGER) DESC, updated_at DESC
+       LIMIT ?`,
+      [...params, options.limit || 50]
+    );
+
+    return rows.map(row => {
+      const metadata = this.parseJson(row.metadata) || {};
+      return {
+        id: String(row.id),
+        content: String(row.content),
+        source: String(row.source) as 'history' | 'hierarchy',
+        layer: row.layer === null || row.layer === undefined ? undefined : Number(row.layer),
+        metadata,
+        timestamp: typeof metadata.timestamp === 'number' ? metadata.timestamp : 0,
+        explanation: [
+          'sqlite-native recall',
+          options.source ? `source=${options.source}` : null,
+          options.role ? `role=${options.role}` : null,
+          options.since !== undefined || options.until !== undefined ? 'time-window-match' : null
+        ].filter(Boolean).join(', ')
+      };
+    });
+  }
+
   async clear(): Promise<void> {
     await this.initialize();
-    for (const table of [
-      'state_meta',
-      'hierarchy_entries',
-      'raw_anchors',
-      'typed_anchors',
-      'retrieval_candidates',
-      'predictor_topic_history',
-      'predictor_message_topics',
-      'predictor_transitions'
-    ]) {
+    for (const table of ['state_meta', 'hierarchy_entries', 'raw_anchors', 'typed_anchors', 'retrieval_candidates', 'predictor_topic_history', 'predictor_message_topics', 'predictor_transitions']) {
       this.persistence.run(`DELETE FROM ${table}`);
     }
     await this.persistence.save();
@@ -344,8 +464,10 @@ export class PluginStateStore {
   }
 
   private loadPredictiveState(): ReturnType<PredictiveAssembler['export']> | null {
+    const historyColumns = this.persistence.query("PRAGMA table_info('predictor_topic_history')");
+    const orderColumn = historyColumns.some(col => String(col.name) === 'seq') ? 'seq' : 'position';
     const topicHistory = this.persistence.query(
-      'SELECT position, topic FROM predictor_topic_history ORDER BY position ASC'
+      `SELECT topic FROM predictor_topic_history ORDER BY ${orderColumn} ASC`
     ).map(row => String(row.topic));
 
     const groupedMessageTopics = new Map<string, string[]>();
@@ -380,9 +502,7 @@ export class PluginStateStore {
     return {
       topicHistory,
       messageTopics: Array.from(groupedMessageTopics.entries()),
-      markovChain: {
-        nodes: Array.from(groupedNodes.entries())
-      }
+      markovChain: { nodes: Array.from(groupedNodes.entries()) }
     };
   }
 
