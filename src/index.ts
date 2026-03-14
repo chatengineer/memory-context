@@ -35,6 +35,18 @@ export class MemoryContextPlugin {
   private stateStore: PluginStateStore;
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
+  private previousBuiltContext: string = "";
+  private lastBuildExplanation: {
+    trigger?: string;
+    changed: boolean;
+    addedCount: number;
+    removedCount: number;
+    addedPreview: string[];
+    removedPreview: string[];
+    currentLength: number;
+    previousLength: number;
+    builtAt?: number;
+  } | null = null;
 
   constructor(config?: Partial<MemoryContextConfig>) {
     this.factory = config 
@@ -43,6 +55,26 @@ export class MemoryContextPlugin {
     this.stateStore = config?.statePath
       ? new PluginStateStore({ statePath: config.statePath })
       : pluginStateStore;
+  }
+
+  private computeContextDiff(previousContext: string, currentContext: string, trigger?: string) {
+    const previousParts = previousContext ? previousContext.split(/\n\n+/).map(s => s.trim()).filter(Boolean) : [];
+    const currentParts = currentContext ? currentContext.split(/\n\n+/).map(s => s.trim()).filter(Boolean) : [];
+    const previousSet = new Set(previousParts);
+    const currentSet = new Set(currentParts);
+    const added = currentParts.filter(part => !previousSet.has(part));
+    const removed = previousParts.filter(part => !currentSet.has(part));
+    return {
+      trigger,
+      changed: added.length > 0 || removed.length > 0,
+      addedCount: added.length,
+      removedCount: removed.length,
+      addedPreview: added.slice(0, 5),
+      removedPreview: removed.slice(0, 5),
+      currentLength: currentContext.length,
+      previousLength: previousContext.length,
+      builtAt: Date.now()
+    };
   }
 
   /** 
@@ -145,7 +177,11 @@ export class MemoryContextPlugin {
       previousPrimaryTopic
     );
 
+    const previousContext = engine.getLastContext();
     await engine.buildContext(sanitized);
+    const currentContext = engine.getLastContext();
+    this.previousBuiltContext = previousContext;
+    this.lastBuildExplanation = this.computeContextDiff(previousContext, currentContext, sanitized.content.slice(0, 160));
     await this.persistVolatileState();
 
     defaultLogger.info("Rebuilt context for next model call", {
@@ -284,7 +320,8 @@ export class MemoryContextPlugin {
             id: 'memory-context',
             guidanceEnabled: true,
             operatorCommand: '/memorycontext',
-            statePath: this.stateStore.getPath()
+            statePath: this.stateStore.getPath(),
+            config: this.factory.getConfig()
           },
           storage: this.factory.getStorage().getTierStats(),
           history: this.factory.getHistory().getStats(),
@@ -293,8 +330,22 @@ export class MemoryContextPlugin {
           statePath: this.stateStore.getPath()
         };
       },
-      'memory_context.build': async (params) => this.factory.getEngine().buildContext(params?.message || params?.triggerMessage || params?.content || ''),
-      'memory_context.jit_build': async (params) => this.factory.getEngine().buildContext(params?.message || params?.triggerMessage || params?.content || ''),
+      'memory_context.build': async (params) => {
+        const trigger = params?.message || params?.triggerMessage || params?.content || '';
+        const previousContext = this.factory.getEngine().getLastContext();
+        const context = await this.factory.getEngine().buildContext(trigger);
+        this.previousBuiltContext = previousContext;
+        this.lastBuildExplanation = this.computeContextDiff(previousContext, context, typeof trigger === 'string' ? trigger.slice(0, 160) : undefined);
+        return context;
+      },
+      'memory_context.jit_build': async (params) => {
+        const trigger = params?.message || params?.triggerMessage || params?.content || '';
+        const previousContext = this.factory.getEngine().getLastContext();
+        const context = await this.factory.getEngine().buildContext(trigger);
+        this.previousBuiltContext = previousContext;
+        this.lastBuildExplanation = this.computeContextDiff(previousContext, context, typeof trigger === 'string' ? trigger.slice(0, 160) : undefined);
+        return context;
+      },
       'memory_context.jit_stats': async () => this.factory.getEngine().getRuntimeStats(),
       'memory_context.jit_clear': async () => {
         await this.factory.getHistory().clear();
@@ -368,7 +419,11 @@ export class MemoryContextPlugin {
       memory_context_jit_build: async (args) => this.invokeGatewayMethod('memory_context.jit_build', args),
       memory_context_jit_clear: async () => this.invokeGatewayMethod('memory_context.jit_clear'),
       memory_context_shift_check: async () => this.invokeGatewayMethod('memory_context.shift_detect'),
-      memory_context_diff: async () => ({ lastContext: this.factory.getEngine().getLastContext() }),
+      memory_context_diff: async () => ({
+        lastContext: this.factory.getEngine().getLastContext(),
+        previousContext: this.previousBuiltContext,
+        explanation: this.lastBuildExplanation
+      }),
       memory_context_history: async (args) => this.invokeGatewayMethod('memory_context.history', args),
       memory_context_recall: async (args) => this.recallMemory(args?.ids ? args.ids : args || {}),
       memory_context_profile: async () => this.factory.getEngine().getPredictor().getPatterns(),
@@ -501,7 +556,7 @@ export const memoryContextPlugin = {
   name: "Memory Context - Zero-Shift Context Engine",
   kind: "memory",
   register(api: any) {
-    const plugin = createPluginRuntime(api?.config);
+    const plugin = createPluginRuntime(api?.pluginConfig);
     const gatewayMethods = plugin.getGatewayMethods();
     for (const [method, handler] of Object.entries(gatewayMethods)) {
       api.registerGatewayMethod(method, async ({ params, respond }: any) => {

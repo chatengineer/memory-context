@@ -2,108 +2,60 @@
   "id": "memory-context",
   "name": "Memory Context - Zero-Shift Context Engine",
   "version": "1.0.0",
-  "description": "The ultimate context preservation system. Guarantees zero context shifting, zero compaction, and 100% context retention via JIT hierarchical assembly. Features: Shift-Proof Architecture, Infinite Context Windows, Predictive Layer Management, and Quantum-Stable Context Anchors.",
+  "description": "Zero-shift memory/context engine for OpenClaw with JIT assembly, typed anchors, predictive recall, SQLite-backed persistence, and runtime search/recall tools.",
   "kind": "memory",
   "main": "./src/index.ts",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": {
-        "type": "boolean",
-        "default": true,
-        "description": "Enable the Memory Context plugin"
-      },
-      "mode": {
-        "type": "string",
-        "enum": ["jit", "adaptive", "strict"],
-        "default": "jit",
-        "description": "Context assembly mode: JIT (recommended), adaptive, or strict preservation"
-      },
-      "hierarchyLevels": {
-        "type": "number",
-        "default": 5,
-        "minimum": 3,
-        "maximum": 10,
-        "description": "Number of context hierarchy levels (L0-L4 default)"
+      "maxContextTokens": {
+        "type": "integer",
+        "default": 128000,
+        "minimum": 1024,
+        "description": "Maximum context token budget available to the engine"
       },
       "targetUtilization": {
         "type": "number",
-        "default": 1.0,
-        "minimum": 0.5,
-        "maximum": 1.0,
-        "description": "Target token window utilization (1.0 = 100%)"
-      },
-      "enableShiftImmunity": {
-        "type": "boolean",
-        "default": true,
-        "description": "Enable context shift immunity - guarantees no context loss during model swaps"
-      },
-      "enablePredictiveAssembly": {
-        "type": "boolean",
-        "default": true,
-        "description": "Pre-assemble likely next contexts based on conversation patterns"
-      },
-      "enableQuantumAnchors": {
-        "type": "boolean",
-        "default": true,
-        "description": "Use quantum-stable anchors for context continuity"
-      },
-      "retentionPolicy": {
-        "type": "string",
-        "enum": ["infinite", "bounded", "circular"],
-        "default": "infinite",
-        "description": "How to handle context growth: infinite (no limits), bounded (max layers), circular (replace oldest)"
-      },
-      "compactionMode": {
-        "type": "string",
-        "enum": ["disabled", "none"],
-        "default": "disabled",
-        "description": "Compaction is disabled - JIT rebuilds from full source every time"
-      },
-      "autoDetectModel": {
-        "type": "boolean",
-        "default": true,
-        "description": "Automatically detect model and configure context window"
-      },
-      "semanticWeight": {
-        "type": "number",
-        "default": 0.3,
+        "default": 0.95,
         "minimum": 0,
         "maximum": 1,
-        "description": "Weight for semantic vs token-based context selection"
+        "description": "Target fraction of the context window to use"
       },
-      "workingMemorySize": {
-        "type": "number",
-        "default": 10,
-        "minimum": 5,
-        "maximum": 50,
-        "description": "Number of recent interactions in working memory (L0)"
-      },
-      "enableHeuristicScoring": {
+      "zeroShiftEnabled": {
         "type": "boolean",
         "default": true,
-        "description": "Use advanced heuristics for content scoring and relevance"
+        "description": "Enable zero-shift rebuild mode"
       },
-      "enableContextDiff": {
+      "quantumAnchorsEnabled": {
         "type": "boolean",
         "default": true,
-        "description": "Track and report what changed between context builds"
+        "description": "Enable typed quantum anchors and shift immunity"
       },
-      "persistFullHistory": {
+      "persistenceEnabled": {
         "type": "boolean",
         "default": true,
-        "description": "Persist complete conversation history (required for JIT rebuilding)"
+        "description": "Enable SQLite-backed persistence for memory state"
+      },
+      "predictiveAssemblyEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable predictive topic transition learning and pre-assembly"
+      },
+      "statePath": {
+        "type": "string",
+        "description": "Path to the SQLite-backed plugin state database"
+      },
+      "tieredStorageConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "l0MaxTokens": { "type": "integer", "minimum": 1 },
+          "l1MaxTokens": { "type": "integer", "minimum": 1 },
+          "l2MaxTokens": { "type": "integer", "minimum": 1 }
+        }
       }
     }
-  },
-  "uiHints": {
-    "enabled": { "label": "Enable Memory Context" },
-    "mode": { "label": "Assembly Mode", "description": "JIT mode rebuilds context fresh every time - zero compaction needed" },
-    "enableShiftImmunity": { "label": "Shift Immunity", "description": "Guarantees context survives model switches" },
-    "enableQuantumAnchors": { "label": "Quantum Anchors", "description": "Unbreakable context continuity markers" },
-    "retentionPolicy": { "label": "Retention Policy", "description": "Infinite = keep everything, rebuild on demand" },
-    "compactionMode": { "label": "Compaction", "description": "Always disabled - JIT doesn't need compaction" }
   },
   "tools": [
     "memory_context_build",
@@ -133,14 +85,5 @@
     "memory_context.history",
     "memory_context.search",
     "memory_context.anchor"
-  ],
-  "services": [
-    "memory-context-jit-builder",
-    "memory-context-shift-detector",
-    "memory-context-optimizer",
-    "memory-context-anchor-manager"
-  ],
-  "dependencies": {
-    "openclaw": ">=0.9.0"
-  }
+  ]
 }
