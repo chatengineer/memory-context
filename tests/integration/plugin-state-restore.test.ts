@@ -5,7 +5,7 @@ import { MemoryContextPlugin } from '../../src/index';
 
 describe('MemoryContextPlugin state restore', () => {
   it('should persist typed anchors, predictive state, and BM25 search state across plugin instances', async () => {
-    const statePath = path.join(os.tmpdir(), `memory-context-state-${Date.now()}.json`);
+    const statePath = path.join(os.tmpdir(), `memory-context-state-${Date.now()}.db`);
 
     const pluginA = new MemoryContextPlugin({ statePath });
     await pluginA.initialize();
@@ -23,9 +23,12 @@ describe('MemoryContextPlugin state restore', () => {
     expect(memoryResults.length).toBeGreaterThan(0);
     expect(memoryResults[0].content.toLowerCase()).toContain('redis');
 
-    const restoredAnchors = pluginB.getEngine().getLastContext() || pluginB.getEngine().search('policy', 5).map(r => r.content).join('\n');
-    expect(await fs.promises.readFile(statePath, 'utf8')).toContain('system-message');
+    const policyResults = await pluginB.getEngine().search('policy', 5);
+    const restoredAnchors = pluginB.getEngine().getLastContext() || policyResults.map(r => r.content).join('\n');
+    const stats = await fs.promises.stat(statePath);
+    expect(stats.size).toBeGreaterThan(0);
     expect(pluginB.getEngine().getPredictor().getStats().historyLength).toBeGreaterThan(0);
+    expect(pluginB.invokeGatewayMethod('memory_context.anchor', { action: 'list' })).resolves.toMatchObject({ typed: expect.any(Array) });
     expect(restoredAnchors).toBeDefined();
 
     await pluginB.onUnload();

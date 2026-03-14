@@ -7,7 +7,7 @@ import {
   MemoryContextConfig,
   memoryContextFactory 
 } from "./core/factory";
-import { JITEngine, MemorySearchResult } from "./core/jit-engine";
+import { JITEngine, MemoryRecallOptions, MemorySearchOptions, MemorySearchResult } from "./core/jit-engine";
 import { HierarchicalContext, Layer } from "./core/hierarchical-context";
 import { FullHistory } from "./persistence/full-history";
 import { pluginStateStore, PluginStateStore } from "./persistence/plugin-state";
@@ -118,10 +118,17 @@ export class MemoryContextPlugin {
         'System message captured as a shift-immune directive',
         { impact: 'high', metadata: { source: 'system-message' } }
       );
+      await this.persistAnchors();
     }
 
+    await this.persistMessageMutation(storedMessageId, sanitized.content, targetLayer, {
+      ...sanitized,
+      timestamp: sanitized.timestamp || Date.now(),
+      role: sanitized.role
+    });
+
     await engine.buildContext(sanitized);
-    await this.persistState();
+    await this.persistVolatileState();
 
     defaultLogger.info("Rebuilt context for next model call", {
       component: "memory-context",
@@ -158,11 +165,11 @@ export class MemoryContextPlugin {
     return this.factory.getHierarchy();
   }
 
-  async searchMemory(query: string, limit: number = 10): Promise<MemorySearchResult[]> {
+  async searchMemory(query: string, options: number | MemorySearchOptions = 10): Promise<MemorySearchResult[]> {
     if (!this.initialized) {
       await this.initialize();
     }
-    return this.factory.getEngine().search(query, limit);
+    return this.factory.getEngine().search(query, options);
   }
 
   async searchStorage(query: string, options: StorageSearchOptions = {}): Promise<StorageSearchResult[]> {
@@ -172,11 +179,11 @@ export class MemoryContextPlugin {
     return this.factory.getStorage().search(query, options);
   }
 
-  async recallMemory(ids: string[]): Promise<MemorySearchResult[]> {
+  async recallMemory(idsOrOptions: string[] | MemoryRecallOptions): Promise<MemorySearchResult[]> {
     if (!this.initialized) {
       await this.initialize();
     }
-    return this.factory.getEngine().recall(ids);
+    return this.factory.getEngine().recall(idsOrOptions);
   }
 
   async snapshot(): Promise<void> {
@@ -255,25 +262,41 @@ export class MemoryContextPlugin {
       },
       'memory_context.search': async (params) => {
         const query = params?.query || params?.text || '';
-        const limit = params?.limit || 10;
         if (params?.storage) {
           return this.searchStorage(query, params);
         }
-        return this.searchMemory(query, limit);
+        return this.searchMemory(query, {
+          limit: params?.limit || 10,
+          source: params?.source || 'all',
+          role: params?.role,
+          since: params?.since,
+          until: params?.until,
+          minScore: params?.minScore,
+          includeExplanation: params?.includeExplanation
+        });
       },
       'memory_context.anchor': async (params) => {
         const immunity = this.factory.getImmunity();
         const action = params?.action || 'list';
         if (action === 'list') return immunity.exportAnchors();
-        if (action === 'remove') return { removed: immunity.removeAnchor(params?.id || params?.anchor) };
+        if (action === 'remove') {
+          const removed = immunity.removeAnchor(params?.id || params?.anchor);
+          if (removed) await this.persistAnchors();
+          return { removed };
+        }
         if (action === 'add') {
           const type = params?.type || 'raw';
-          if (type === 'decision') return immunity.addDecisionAnchor(params?.decision || params?.content, params?.rationale || 'manual anchor');
-          if (type === 'state') return immunity.addStateAnchor(params?.key, params?.value, params?.previousValue);
-          if (type === 'reference') return immunity.addReferenceAnchor(params?.referenceType || 'document', params?.reference, params?.title);
-          if (type === 'custom') return immunity.addCustomAnchor(params?.customType || 'custom', params?.data || {}, params?.content);
-          immunity.addAnchor(params?.content || params?.anchor || '');
-          return { ok: true };
+          let result: any;
+          if (type === 'decision') result = immunity.addDecisionAnchor(params?.decision || params?.content, params?.rationale || 'manual anchor');
+          else if (type === 'state') result = immunity.addStateAnchor(params?.key, params?.value, params?.previousValue);
+          else if (type === 'reference') result = immunity.addReferenceAnchor(params?.referenceType || 'document', params?.reference, params?.title);
+          else if (type === 'custom') result = immunity.addCustomAnchor(params?.customType || 'custom', params?.data || {}, params?.content);
+          else {
+            immunity.addAnchor(params?.content || params?.anchor || '');
+            result = { ok: true };
+          }
+          await this.persistAnchors();
+          return result;
         }
         throw new Error(`Unsupported anchor action: ${action}`);
       }
@@ -291,7 +314,7 @@ export class MemoryContextPlugin {
       memory_context_shift_check: async () => this.invokeGatewayMethod('memory_context.shift_detect'),
       memory_context_diff: async () => ({ lastContext: this.factory.getEngine().getLastContext() }),
       memory_context_history: async (args) => this.invokeGatewayMethod('memory_context.history', args),
-      memory_context_recall: async (args) => this.recallMemory(args?.ids || []),
+      memory_context_recall: async (args) => this.recallMemory(args?.ids ? args.ids : args || {}),
       memory_context_profile: async () => this.factory.getEngine().getPredictor().getPatterns(),
       memory_context_validate: async (args) => this.invokeGatewayMethod('memory_context.validate', args),
       memory_context_snapshot: async () => { await this.snapshot(); return { ok: true, path: this.stateStore.getPath() }; },
@@ -307,37 +330,98 @@ export class MemoryContextPlugin {
 
   private async persistState(): Promise<void> {
     const hierarchy = this.factory.getHierarchy();
-    const immunity = this.factory.getImmunity();
     const engine = this.factory.getEngine();
 
-    await this.stateStore.save({
-      version: '1.5.0',
-      savedAt: Date.now(),
-      hierarchy: hierarchy.exportState(),
-      immunity: immunity.exportAnchors(),
-      predictive: engine.getPredictor().export(),
-      engine: engine.exportState()
+    const hierarchyEntries = hierarchy.exportState().layers.flatMap((entries, layer) =>
+      entries.map((content, index) => ({
+        id: `restore:${layer}:${index}:${content.slice(0, 16)}`,
+        layer,
+        content,
+        metadata: { restored: true }
+      }))
+    );
+
+    await this.stateStore.replaceHierarchy(hierarchyEntries);
+    await this.persistAnchors();
+    await this.stateStore.replaceRetrievalCandidates(engine.getRetrievalCandidates());
+    await this.stateStore.savePredictiveState(engine.getPredictor().export());
+    await this.persistVolatileState();
+  }
+
+  private async persistVolatileState(): Promise<void> {
+    const engine = this.factory.getEngine();
+    await this.stateStore.setMeta('version', '1.6.0');
+    await this.stateStore.setMeta('savedAt', Date.now());
+    await this.stateStore.setMeta('lastContext', engine.getLastContext());
+  }
+
+  private async persistAnchors(): Promise<void> {
+    const anchors = this.factory.getImmunity().exportAnchors();
+    await this.stateStore.saveRawAnchors(anchors.raw);
+    await this.stateStore.saveTypedAnchors(anchors.typed);
+  }
+
+  private async persistMessageMutation(
+    messageId: string,
+    content: string,
+    layer: number,
+    metadata: Record<string, any>
+  ): Promise<void> {
+    await this.stateStore.upsertHierarchyEntry({
+      id: `hierarchy:${layer}:${messageId}`,
+      layer,
+      content,
+      metadata
     });
+
+    await this.stateStore.upsertRetrievalCandidate({
+      id: messageId,
+      content,
+      source: 'history',
+      metadata
+    });
+
+    await this.stateStore.upsertRetrievalCandidate({
+      id: `hierarchy:${layer}:${messageId}`,
+      content,
+      source: 'hierarchy',
+      layer,
+      metadata: { ...metadata, layer }
+    });
+
+    await this.stateStore.savePredictiveState(this.factory.getEngine().getPredictor().export());
   }
 
   private async restoreState(): Promise<void> {
-    const snapshot = await this.stateStore.load();
-    if (!snapshot) return;
+    const state = await this.stateStore.loadState();
+    if (!state) return;
 
     const hierarchy = this.factory.getHierarchy();
     const immunity = this.factory.getImmunity();
     const engine = this.factory.getEngine();
 
-    if (snapshot.hierarchy) {
-      hierarchy.importState(snapshot.hierarchy);
+    const layers = [[], [], [], [], []] as string[][];
+    for (const entry of state.hierarchyEntries) {
+      if (!layers[entry.layer]) layers[entry.layer] = [];
+      layers[entry.layer].push(entry.content);
     }
-    if (snapshot.immunity) {
-      immunity.importAnchors(snapshot.immunity);
-    }
-    if (snapshot.predictive || snapshot.engine) {
-      engine.importState({
-        predictor: snapshot.predictive as any,
-        ...(snapshot.engine as any || {})
+    hierarchy.importState({ layers });
+
+    immunity.importAnchors({ raw: state.rawAnchors, typed: state.typedAnchors });
+
+    await engine.clearRuntimeState();
+    engine.importState({
+      lastContext: state.lastContext,
+      predictor: state.predictive || undefined
+    });
+
+    for (const candidate of state.retrievalCandidates) {
+      engine.seedCandidate({
+        id: candidate.id,
+        content: candidate.content,
+        metadata: { ...(candidate.metadata || {}), source: candidate.source, layer: candidate.layer },
+        source: candidate.source,
+        layer: candidate.layer
       });
     }
   }

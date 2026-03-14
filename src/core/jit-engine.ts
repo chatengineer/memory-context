@@ -22,12 +22,34 @@ interface JITCandidate {
   layer?: number;
 }
 
+export interface MemorySearchOptions {
+  limit?: number;
+  source?: 'history' | 'hierarchy' | 'all';
+  role?: string;
+  since?: number;
+  until?: number;
+  minScore?: number;
+  includeExplanation?: boolean;
+}
+
+export interface MemoryRecallOptions {
+  ids?: string[];
+  limit?: number;
+  source?: 'history' | 'hierarchy' | 'all';
+  role?: string;
+  since?: number;
+  until?: number;
+}
+
 export interface MemorySearchResult {
   id: string;
   score: number;
   content: string;
   metadata?: Metadata;
   source: 'history' | 'hierarchy';
+  timestamp?: number;
+  explanation?: string;
+  matchedTerms?: string[];
 }
 
 export class JITEngine {
@@ -82,7 +104,7 @@ export class JITEngine {
     metadata?: Metadata,
     layer?: number
   ): Promise<void> {
-    this.upsertCandidate({
+    this.seedCandidate({
       id: messageId,
       content,
       metadata: { ...(metadata || {}), id: messageId, source: 'history' },
@@ -90,7 +112,7 @@ export class JITEngine {
     });
 
     if (typeof layer === 'number') {
-      this.upsertCandidate({
+      this.seedCandidate({
         id: `hierarchy:${layer}:${messageId}`,
         content,
         metadata: { ...(metadata || {}), id: `hierarchy:${layer}:${messageId}`, layer, source: 'hierarchy' },
@@ -98,6 +120,14 @@ export class JITEngine {
         layer
       });
     }
+  }
+
+  seedCandidate(candidate: { id: string; content: string; metadata?: Metadata; source: 'history' | 'hierarchy'; layer?: number }): void {
+    this.upsertCandidate(candidate);
+  }
+
+  getRetrievalCandidates(): Array<{ id: string; content: string; metadata?: Metadata; source: 'history' | 'hierarchy'; layer?: number }> {
+    return Array.from(this.retrievalCandidates.values()).map(candidate => ({ ...candidate }));
   }
 
   async clearRuntimeState(): Promise<void> {
@@ -122,38 +152,83 @@ export class JITEngine {
     return finalContext;
   }
 
-  async search(query: string, limit: number = 10): Promise<MemorySearchResult[]> {
+  async search(query: string, optionsOrLimit: number | MemorySearchOptions = 10): Promise<MemorySearchResult[]> {
     await this.ensureSeeded();
     if (!query.trim()) return [];
 
-    const results = this.retrievalIndex.search(query, limit);
-    const mapped: MemorySearchResult[] = [];
+    const options: MemorySearchOptions = typeof optionsOrLimit === 'number'
+      ? { limit: optionsOrLimit }
+      : optionsOrLimit;
 
-    for (const result of results) {
-      const candidate = this.retrievalCandidates.get(result.id);
-      if (!candidate) continue;
-      mapped.push({
-        id: result.id,
-        score: result.score,
+    const filteredCandidates = this.filterCandidates(options);
+    const tempIndex = new BM25Index();
+    for (const candidate of filteredCandidates) {
+      tempIndex.addDocument({
+        id: candidate.id,
         content: candidate.content,
-        metadata: candidate.metadata,
-        source: candidate.source
+        metadata: candidate.metadata
       });
     }
 
-    return mapped;
+    const results = tempIndex.search(query, options.limit || 10);
+    const mapped: MemorySearchResult[] = [];
+
+    for (const result of results) {
+      const candidate = filteredCandidates.find(item => item.id === result.id);
+      if (!candidate) continue;
+
+      const relevance = this.advancedScorer.computeScore(candidate.content, candidate.metadata, {
+        query,
+        currentContext: this.immunity.getAnchors(),
+        referenceTime: Date.now(),
+        bm25Index: tempIndex,
+        _keywordScore: result.score
+      });
+
+      if (options.minScore !== undefined && relevance.score < options.minScore) {
+        continue;
+      }
+
+      mapped.push({
+        id: result.id,
+        score: relevance.score,
+        content: candidate.content,
+        metadata: candidate.metadata,
+        source: candidate.source,
+        timestamp: this.getTimestamp(candidate.metadata),
+        explanation: options.includeExplanation ? relevance.explanation : undefined,
+        matchedTerms: result.terms
+      });
+    }
+
+    return mapped.sort((a, b) => b.score - a.score);
   }
 
-  recall(ids: string[]): MemorySearchResult[] {
-    return ids
-      .map(id => this.retrievalCandidates.get(id))
-      .filter((candidate): candidate is JITCandidate => Boolean(candidate))
+  recall(idsOrOptions: string[] | MemoryRecallOptions): MemorySearchResult[] {
+    const options: MemoryRecallOptions = Array.isArray(idsOrOptions)
+      ? { ids: idsOrOptions }
+      : idsOrOptions;
+
+    let candidates = Array.from(this.retrievalCandidates.values());
+
+    if (options.ids?.length) {
+      const wanted = new Set(options.ids);
+      candidates = candidates.filter(candidate => wanted.has(candidate.id));
+    }
+
+    candidates = this.filterCandidates(options, candidates);
+    candidates.sort((a, b) => this.getTimestamp(b.metadata) - this.getTimestamp(a.metadata));
+
+    return candidates
+      .slice(0, options.limit || candidates.length)
       .map(candidate => ({
         id: candidate.id,
         score: 1,
         content: candidate.content,
         metadata: candidate.metadata,
-        source: candidate.source
+        source: candidate.source,
+        timestamp: this.getTimestamp(candidate.metadata),
+        explanation: this.buildRecallExplanation(candidate, options)
       }));
   }
 
@@ -295,7 +370,7 @@ export class JITEngine {
   private cachePredictedContexts(): void {
     for (const prediction of this.predictor.predictNextContexts()) {
       this.predictor.preAssembleContext(prediction.topic, () => {
-        return this.recall(prediction.contextIds)
+        return this.recall({ ids: prediction.contextIds })
           .map(result => result.content)
           .join('\n\n');
       });
@@ -309,5 +384,47 @@ export class JITEngine {
       content: candidate.content,
       metadata: candidate.metadata
     });
+  }
+
+  private filterCandidates(
+    options: Pick<MemorySearchOptions, 'source' | 'role' | 'since' | 'until'>,
+    candidates: JITCandidate[] = Array.from(this.retrievalCandidates.values())
+  ): JITCandidate[] {
+    return candidates.filter(candidate => {
+      if (options.source && options.source !== 'all' && candidate.source !== options.source) {
+        return false;
+      }
+
+      const role = candidate.metadata?.role;
+      if (options.role && role !== options.role) {
+        return false;
+      }
+
+      const timestamp = this.getTimestamp(candidate.metadata);
+      if (options.since !== undefined && timestamp < options.since) {
+        return false;
+      }
+      if (options.until !== undefined && timestamp > options.until) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  private getTimestamp(metadata?: Metadata): number {
+    const ts = metadata?.timestamp;
+    return typeof ts === 'number' ? ts : 0;
+  }
+
+  private buildRecallExplanation(candidate: JITCandidate, options: MemoryRecallOptions): string {
+    const bits = [`source=${candidate.source}`];
+    const timestamp = this.getTimestamp(candidate.metadata);
+    if (timestamp) bits.push(`timestamp=${timestamp}`);
+    if (options.since !== undefined || options.until !== undefined) {
+      bits.push('time-window-match');
+    }
+    if (options.role) bits.push(`role=${options.role}`);
+    return bits.join(', ');
   }
 }
