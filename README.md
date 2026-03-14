@@ -1,10 +1,10 @@
 # Memory Context Plugin
 
-**The ultimate context preservation system for OpenClaw.**
+**An advanced context preservation system for OpenClaw.**
 
-Zero-shift guarantee. No compaction. JIT hierarchical assembly with quantum anchors.
+JIT hierarchical assembly, tiered storage, typed anchors, and shift-immunity safeguards for production-grade context management.
 
-**Version: 1.4.0**
+**Version: 1.5.0**
 
 ---
 
@@ -14,11 +14,11 @@ The `memory-context` plugin represents a radical departure from traditional cont
 
 ### Core Philosophy
 
-1. **No Compaction Ever** - Context is never compacted, compressed, or lost. The full source of truth is always preserved.
-2. **Zero Context Shifting** - Quantum anchors guarantee continuity across model switches, session boundaries, and system events.
+1. **Rebuild Instead of Drift** - Context is rebuilt on demand rather than incrementally mutated until it becomes stale.
+2. **Shift-Immunity Safeguards** - Anchors and lifecycle hooks help preserve continuity across model switches, session boundaries, and system events.
 3. **Hierarchical Organization** - Five distinct layers (L0-L4) provide clear separation of concerns.
-4. **100% Token Utilization** - Every available token is used effectively.
-5. **Bounded Memory** - Tiered storage prevents unbounded growth while preserving history.
+4. **High Utilization with Safety Margin** - The default configuration targets strong token utilization without running the window at a dangerous 100%.
+5. **Bounded Production Memory** - Tiered storage prevents unbounded growth while preserving useful history.
 
 ### Key Differentiator
 
@@ -42,7 +42,7 @@ Traditional systems:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MEMORY CONTEXT v1.4.0                     │
+│                    MEMORY CONTEXT v1.5.0                     │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   JIT Engine │  │   Quantum    │  │   Budget     │       │
@@ -457,6 +457,25 @@ export { CircuitBreaker, CircuitState } from './src/utils/circuit-breaker';
 
 ---
 
+## GitHub Workflows
+
+This repository now includes production-oriented GitHub automation:
+
+- **CI**: Node 20/22 build and test matrix
+- **Coverage**: Jest coverage generation with LCOV + HTML artifacts
+- **Release**: tag/manual release workflow that validates, builds, tests, and packages the plugin
+- **Dependency Review**: PR-time dependency risk checks
+
+### Local equivalents
+
+```bash
+npm run verify:metadata
+npm run build
+npm test
+npm run test:coverage
+npm run ci
+```
+
 ## Troubleshooting
 
 ### Issue: "Cannot load plugin"
@@ -483,6 +502,12 @@ export { CircuitBreaker, CircuitState } from './src/utils/circuit-breaker';
 ---
 
 ## Changelog
+
+### v1.5.0 (2026-03-14)
+- Added GitHub Actions workflows for CI, release packaging, and dependency review
+- Fixed Jest coverage reporter output (`lcov` instead of broken `lcv`)
+- Synchronized package and plugin manifest versions and metadata
+- Added repository packaging/license metadata and a metadata verification script
 
 ### v1.4.0 (2026-02-14)
 - Added observability with Prometheus metrics

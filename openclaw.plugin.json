@@ -1,10 +1,10 @@
 {
   "id": "memory-context",
   "name": "Memory Context - Zero-Shift Context Engine",
-  "version": "1.0.0",
-  "description": "The ultimate context preservation system. Guarantees zero context shifting, zero compaction, and 100% context retention via JIT hierarchical assembly. Features: Shift-Proof Architecture, Infinite Context Windows, Predictive Layer Management, and Quantum-Stable Context Anchors.",
+  "version": "1.5.0",
+  "description": "Advanced memory plugin for OpenClaw with JIT hierarchical assembly, tiered persistence, shift-immunity safeguards, and observability.",
   "kind": "memory",
-  "main": "./src/index.ts",
+  "main": "./index.ts",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -29,15 +29,15 @@
       },
       "targetUtilization": {
         "type": "number",
-        "default": 1.0,
+        "default": 0.95,
         "minimum": 0.5,
         "maximum": 1.0,
-        "description": "Target token window utilization (1.0 = 100%)"
+        "description": "Target token window utilization with a default safety reserve"
       },
       "enableShiftImmunity": {
         "type": "boolean",
         "default": true,
-        "description": "Enable context shift immunity - guarantees no context loss during model swaps"
+        "description": "Enable context shift immunity across model switches and restarts"
       },
       "enablePredictiveAssembly": {
         "type": "boolean",
@@ -47,19 +47,19 @@
       "enableQuantumAnchors": {
         "type": "boolean",
         "default": true,
-        "description": "Use quantum-stable anchors for context continuity"
+        "description": "Use typed anchors for context continuity"
       },
       "retentionPolicy": {
         "type": "string",
         "enum": ["infinite", "bounded", "circular"],
-        "default": "infinite",
-        "description": "How to handle context growth: infinite (no limits), bounded (max layers), circular (replace oldest)"
+        "default": "bounded",
+        "description": "How to handle context growth across tiers"
       },
       "compactionMode": {
         "type": "string",
         "enum": ["disabled", "none"],
         "default": "disabled",
-        "description": "Compaction is disabled - JIT rebuilds from full source every time"
+        "description": "Compaction is disabled; context is rebuilt from source using JIT assembly"
       },
       "autoDetectModel": {
         "type": "boolean",
@@ -93,17 +93,17 @@
       "persistFullHistory": {
         "type": "boolean",
         "default": true,
-        "description": "Persist complete conversation history (required for JIT rebuilding)"
+        "description": "Persist complete conversation history for deterministic rebuilding"
       }
     }
   },
   "uiHints": {
     "enabled": { "label": "Enable Memory Context" },
-    "mode": { "label": "Assembly Mode", "description": "JIT mode rebuilds context fresh every time - zero compaction needed" },
-    "enableShiftImmunity": { "label": "Shift Immunity", "description": "Guarantees context survives model switches" },
-    "enableQuantumAnchors": { "label": "Quantum Anchors", "description": "Unbreakable context continuity markers" },
-    "retentionPolicy": { "label": "Retention Policy", "description": "Infinite = keep everything, rebuild on demand" },
-    "compactionMode": { "label": "Compaction", "description": "Always disabled - JIT doesn't need compaction" }
+    "mode": { "label": "Assembly Mode", "description": "JIT mode rebuilds context fresh every time instead of incrementally compacting it" },
+    "enableShiftImmunity": { "label": "Shift Immunity", "description": "Preserve continuity across model switches and restarts" },
+    "enableQuantumAnchors": { "label": "Quantum Anchors", "description": "Typed continuity markers for critical context" },
+    "retentionPolicy": { "label": "Retention Policy", "description": "Bounded is recommended for production safety" },
+    "compactionMode": { "label": "Compaction", "description": "Disabled because the engine rebuilds context from retained source data" }
   },
   "tools": [
     "memory_context_build",

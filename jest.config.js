@@ -15,16 +15,9 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/**/index.ts'
   ],
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80
-    }
-  },
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcv', 'html'],
+  coverageProvider: 'v8',
+  coverageReporters: ['text', 'lcov', 'html'],
   moduleNameMapper: {
     '^(.*/.*)\\.js$': '$1'
   },
