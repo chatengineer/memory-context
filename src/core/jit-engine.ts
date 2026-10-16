@@ -9,8 +9,9 @@ import {
   AdvancedRelevanceScorer,
   ScoringContext,
   computeRelevanceScore
-} from '../heuristics/relevance';
+} from '../heuristics/advanced-relevance';
 import { BM25Index } from '../search/bm25-index';
+import { QueryNormalizer } from '../search/query-normalizer';
 import { Metadata } from '../types';
 import { PredictiveAssembler } from './predictive-assembly';
 
@@ -29,6 +30,10 @@ export interface MemorySearchResult {
   metadata?: Metadata;
   source: JITCandidate['source'];
 }
+
+// MMR is O(n^2); diversify only the head that can realistically reach the
+// token budget and keep the remaining candidates in score order.
+const MMR_WINDOW = 64;
 
 /**
  * JITEngine – Just‑In‑Time context assembler
@@ -50,6 +55,7 @@ export class JITEngine {
   private lastContext: string = '';
   private retrievalIndex: BM25Index = new BM25Index();
   private retrievalCandidates: Map<string, JITCandidate> = new Map();
+  private queryNormalizer: QueryNormalizer = new QueryNormalizer();
 
   constructor(
     hierarchy: HierarchicalContext,
@@ -104,7 +110,8 @@ export class JITEngine {
   search(query: string, limit: number = 10): MemorySearchResult[] {
     if (!query.trim()) return [];
 
-    const results = this.retrievalIndex.search(query, limit);
+    const normalized = this.queryNormalizer.normalize(query, Array.from(this.retrievalCandidates.values()));
+    const results = this.retrievalIndex.search(normalized.expanded, limit);
     return results.map(result => {
       const candidate = this.retrievalCandidates.get(result.id);
       return {
@@ -236,6 +243,8 @@ export class JITEngine {
   private rankCandidates(candidates: JITCandidate[], query: string, anchors: string[]): string[] {
     if (candidates.length === 0) return [];
 
+    const normalizedQuery = this.queryNormalizer.normalize(query, candidates);
+    const adaptiveRecency = this.computeAdaptiveRecency(candidates);
     const bm25Index = new BM25Index();
     for (const candidate of candidates) {
       bm25Index.addDocument({
@@ -253,10 +262,11 @@ export class JITEngine {
     }
 
     const scoringContext: ScoringContext = {
-      query: query || undefined,
+      query: normalizedQuery.expanded || undefined,
       currentContext: anchors,
       referenceTime: Date.now(),
-      bm25Index
+      bm25Index,
+      adaptiveRecency
     };
 
     const batchScores = this.advancedScorer.computeBatchScores(
@@ -267,7 +277,7 @@ export class JITEngine {
       scoringContext
     );
 
-    return candidates
+    const scored = candidates
       .map((candidate, index) => {
         const baseScore = batchScores[index] ?? this.relevanceFn(candidate.content, candidate.metadata, scoringContext);
         const layerBoost = candidate.source === 'hierarchy'
@@ -277,12 +287,98 @@ export class JITEngine {
         const predictedBoost = predictedIds.get(candidate.id) || 0;
 
         return {
-          content: candidate.content,
+          candidate,
           score: baseScore + layerBoost + sourceBoost + predictedBoost
         };
       })
-      .sort((a, b) => b.score - a.score)
-      .map(item => item.content);
+      .sort((a, b) => b.score - a.score);
+
+    return this.applyMMRDiversity(scored)
+      .map(item => this.formatWithEvidence(item.candidate));
+  }
+
+  private computeAdaptiveRecency(candidates: JITCandidate[]): ScoringContext['adaptiveRecency'] {
+    const timestamps = candidates
+      .map(candidate => Number(candidate.metadata?.timestamp))
+      .filter(timestamp => Number.isFinite(timestamp) && timestamp > 0)
+      .sort((a, b) => a - b);
+
+    if (timestamps.length < 2) return undefined;
+
+    const span = Math.max(0, timestamps[timestamps.length - 1] - timestamps[0]);
+    const day = 24 * 60 * 60 * 1000;
+    return {
+      halfLife: Math.max(day, Math.min(span / 3, 30 * day)),
+      maxAge: Math.max(7 * day, Math.min(span + day, 180 * day))
+    };
+  }
+
+  private applyMMRDiversity(scored: Array<{ candidate: JITCandidate; score: number }>): Array<{ candidate: JITCandidate; score: number }> {
+    if (scored.length < 2) return scored;
+
+    const mmrWindow = Math.min(scored.length, MMR_WINDOW);
+    const selected: Array<{ candidate: JITCandidate; score: number }> = [];
+    const remaining = scored.slice(0, mmrWindow);
+    const tail = scored.slice(mmrWindow);
+    const termCache = new Map<string, Set<string>>();
+    const lambda = 0.78;
+
+    const termsFor = (candidate: JITCandidate): Set<string> => {
+      const cached = termCache.get(candidate.id);
+      if (cached) return cached;
+      const terms = new Set(this.simpleTerms(candidate.content));
+      termCache.set(candidate.id, terms);
+      return terms;
+    };
+
+    while (remaining.length > 0) {
+      let bestIndex = 0;
+      let bestScore = Number.NEGATIVE_INFINITY;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const item = remaining[i];
+        const terms = termsFor(item.candidate);
+        const maxSimilarity = selected.reduce((max, chosen) => {
+          return Math.max(max, this.termSimilarity(terms, termsFor(chosen.candidate)));
+        }, 0);
+        const mmrScore = lambda * item.score - (1 - lambda) * maxSimilarity;
+        if (mmrScore > bestScore) {
+          bestScore = mmrScore;
+          bestIndex = i;
+        }
+      }
+
+      selected.push(remaining.splice(bestIndex, 1)[0]);
+    }
+
+    return [...selected, ...tail];
+  }
+
+  private termSimilarity(aTerms: Set<string>, bTerms: Set<string>): number {
+    if (aTerms.size === 0 || bTerms.size === 0) return 0;
+    const [small, large] = aTerms.size <= bTerms.size ? [aTerms, bTerms] : [bTerms, aTerms];
+    let overlap = 0;
+    for (const term of small) if (large.has(term)) overlap++;
+    return overlap / Math.sqrt(aTerms.size * bTerms.size);
+  }
+
+  private simpleTerms(text: string): string[] {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s_+#$]/g, ' ')
+      .split(/\s+/)
+      .filter(term => term.length > 2);
+  }
+
+  private formatWithEvidence(candidate: JITCandidate): string {
+    const timestamp = candidate.metadata?.timestamp;
+    const validTimestamp = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined;
+    const evidence = [
+      `source=${candidate.source}`,
+      `id=${candidate.id}`,
+      validTimestamp !== undefined ? `timestamp=${new Date(validTimestamp).toISOString()}` : undefined
+    ].filter(Boolean).join(' ');
+    return `[memory-evidence ${evidence}]\n${candidate.content}`;
   }
 
   private refreshRetrievalIndex(candidates: JITCandidate[]): void {
