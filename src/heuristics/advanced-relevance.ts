@@ -64,6 +64,10 @@ export interface ScoringContext {
   currentContext?: string[];
   referenceTime?: number;
   bm25Index?: BM25Index;
+  adaptiveRecency?: {
+    halfLife: number;
+    maxAge: number;
+  };
   _keywordScore?: number; // Internal: pre-calculated BM25 score
 }
 
@@ -101,7 +105,7 @@ export class AdvancedRelevanceScorer {
   ): RelevanceResult {
     const factors = {
       keyword: this.computeKeywordScore(content, context),
-      recency: this.computeRecencyScore(metadata?.timestamp, context?.referenceTime),
+      recency: this.computeRecencyScore(metadata?.timestamp, context?.referenceTime, context?.adaptiveRecency),
       priority: this.computePriorityScore(content),
       density: this.computeDensityScore(content),
       overlap: this.computeOverlapScore(content, context?.currentContext)
@@ -195,17 +199,25 @@ export class AdvancedRelevanceScorer {
   /**
    * Compute time-based recency score
    */
-  private computeRecencyScore(timestamp?: number, referenceTime?: number): number {
+  private computeRecencyScore(
+    timestamp?: number,
+    referenceTime?: number,
+    adaptive?: ScoringContext['adaptiveRecency']
+  ): number {
     if (!timestamp) return 0.5; // Neutral score for missing timestamp
 
     const now = referenceTime || Date.now();
     const age = now - timestamp;
+    const halfLife = adaptive?.halfLife || this.config.halfLife;
+    const maxAge = adaptive?.maxAge || this.config.maxAge;
 
-    // Beyond max age = zero relevance
-    if (age > this.config.maxAge) return 0;
+    // Beyond max age = zero relevance. The horizon is adaptive when the corpus spans
+    // weeks/months so LoCoMo-style long-distance evidence is not zeroed out by a
+    // fixed 7-day cutoff.
+    if (age > maxAge) return 0;
 
     // Exponential decay: score = 0.5^(age / halfLife)
-    const decayFactor = Math.pow(0.5, age / this.config.halfLife);
+    const decayFactor = Math.pow(0.5, age / halfLife);
     return decayFactor;
   }
 
