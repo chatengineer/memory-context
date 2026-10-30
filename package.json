@@ -1,6 +1,6 @@
 {
   "name": "memory-context",
-  "version": "1.5.0",
+  "version": "1.5.5",
   "description": "Advanced context preservation system for OpenClaw with JIT hierarchical assembly, tiered storage, and shift-immunity safeguards",
   "private": true,
   "main": "./dist/index.js",
@@ -21,6 +21,7 @@
     "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit",
     "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration",
     "benchmark": "node --experimental-strip-types benchmarks/run-benchmarks.ts",
+    "benchmark:locomo": "node benchmarks/run-locomo-regression.js",
     "verify:metadata": "node scripts/verify-metadata.js",
     "ci": "npm run verify:metadata && npm run build && npm run test:coverage"
   },

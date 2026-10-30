@@ -1,7 +1,7 @@
 {
   "id": "memory-context",
   "name": "Memory Context - Zero-Shift Context Engine",
-  "version": "1.5.0",
+  "version": "1.5.5",
   "description": "Advanced memory plugin for OpenClaw with JIT hierarchical assembly, tiered persistence, shift-immunity safeguards, and observability.",
   "kind": "memory",
   "main": "./index.ts",
@@ -105,23 +105,28 @@
     "retentionPolicy": { "label": "Retention Policy", "description": "Bounded is recommended for production safety" },
     "compactionMode": { "label": "Compaction", "description": "Disabled because the engine rebuilds context from retained source data" }
   },
-  "tools": [
-    "memory_context_build",
-    "memory_context_stats",
-    "memory_context_search",
-    "memory_context_anchor",
-    "memory_context_jit_build",
-    "memory_context_jit_clear",
-    "memory_context_shift_check",
-    "memory_context_diff",
-    "memory_context_history",
-    "memory_context_recall",
-    "memory_context_profile",
-    "memory_context_validate",
-    "memory_context_snapshot",
-    "memory_context_restore",
-    "memory_context_optimize"
-  ],
+  "contracts": {
+    "tools": [
+      "memory_context_build",
+      "memory_context_stats",
+      "memory_context_search",
+      "memory_context_anchor",
+      "memory_context_jit_build",
+      "memory_context_jit_clear",
+      "memory_context_shift_check",
+      "memory_context_diff",
+      "memory_context_history",
+      "memory_context_recall",
+      "memory_context_profile",
+      "memory_context_validate",
+      "memory_context_snapshot",
+      "memory_context_restore",
+      "memory_context_optimize"
+    ]
+  },
+  "openclaw": {
+    "extensions": "./dist/index.js"
+  },
   "gatewayMethods": [
     "memory_context.status",
     "memory_context.build",
