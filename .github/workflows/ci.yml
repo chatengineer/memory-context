@@ -36,6 +36,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: LoCoMo retrieval regression
+        run: npm run benchmark:locomo
+
       - name: Run tests
         run: npm test
 

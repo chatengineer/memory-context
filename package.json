@@ -1,6 +1,6 @@
 {
   "name": "memory-context",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Advanced context preservation system for OpenClaw with JIT hierarchical assembly, tiered storage, and shift-immunity safeguards",
   "private": true,
   "main": "./dist/index.js",
@@ -21,8 +21,9 @@
     "test:unit": "node --experimental-vm-modules node_modules/.bin/jest tests/unit",
     "test:integration": "node --experimental-vm-modules node_modules/.bin/jest tests/integration",
     "benchmark": "node --experimental-strip-types benchmarks/run-benchmarks.ts",
+    "benchmark:locomo": "npm run build && node benchmarks/run-locomo-regression.js",
     "verify:metadata": "node scripts/verify-metadata.js",
-    "ci": "npm run verify:metadata && npm run build && npm run test:coverage"
+    "ci": "npm run verify:metadata && npm run build && npm run benchmark:locomo && npm run test:coverage"
   },
   "keywords": [
     "openclaw",
@@ -43,6 +44,11 @@
     "url": "https://github.com/chatengineer/memory-context/issues"
   },
   "homepage": "https://github.com/chatengineer/memory-context#readme",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
   "engines": {
     "node": ">=20"
   },
