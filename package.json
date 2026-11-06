@@ -16,10 +16,10 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -watch",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest",
-    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
-    "test:unit": "node --experimental-vm-modules node_modules/.bin/jest tests/unit",
-    "test:integration": "node --experimental-vm-modules node_modules/.bin/jest tests/integration",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit",
+    "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration",
     "benchmark": "node --experimental-strip-types benchmarks/run-benchmarks.ts",
     "verify:metadata": "node scripts/verify-metadata.js",
     "ci": "npm run verify:metadata && npm run build && npm run test:coverage"
