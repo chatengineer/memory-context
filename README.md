@@ -539,6 +539,12 @@ npm run ci
 
 ---
 
+## Roadmap
+
+Planned work (docs, manifest/implementation parity, durable cold tier, type safety, performance, packaging) is tracked in [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## License
 
 MIT License - See LICENSE file for details.
