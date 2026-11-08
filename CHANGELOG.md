@@ -13,6 +13,27 @@ Planned work for upcoming milestones is tracked in [ROADMAP.md](ROADMAP.md) and 
 
 ---
 
+## [1.5.5] - 2026-11-09
+
+### Added
+- Query normalization and lightweight entity expansion for long-horizon retrieval (`src/search/query-normalizer.ts`).
+- Adaptive recency horizons derived from the corpus time span, so evidence older than the fixed 7-day cutoff survives in long conversations.
+- Maximal-marginal-relevance (MMR) diversity over the top retrieval window to reduce near-duplicate memories.
+- Provenance evidence headers (`[memory-evidence source=… id=… timestamp=…]`) on assembled context entries.
+- LoCoMo-style retrieval regression benchmark (`benchmarks/run-locomo-regression.js`) and a CI step for it.
+
+### Changed
+- Plugin tools moved to the `contracts.tools` manifest schema (current OpenClaw ignores top-level `tools`).
+- Added the `openclaw.extensions` entry so OpenClaw loads the compiled `dist/index.js`.
+- Retrieval ranking now uses the normalized/expanded query for BM25 and heuristic scoring.
+
+### Fixed
+- Provenance formatting no longer throws on non-finite metadata timestamps.
+- MMR is bounded to the top 64 candidates and caches term sets, avoiding quadratic work on large histories.
+- Possessives no longer leave a stray `s` token, and `YYYY-MM` dates now expand to month names.
+
+---
+
 ## [1.5.0] - 2026-03-14
 
 ### Added
