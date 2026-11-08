@@ -34,6 +34,81 @@ Traditional systems:
 - Preserves all history via tiered storage
 - Maintains continuity via quantum anchors
 
+### What It Does
+`memory-context` is a deterministic context-preservation engine for [OpenClaw](https://github.com/openclaw) agents. Instead of progressively degrading context quality through lossy summarization or sliding-window compaction, it reconstructs prompt context Just-In-Time (JIT) on every turn from multi-tiered persistence (LRU memory, SQLite, and cold archive). It injects typed "quantum anchors" so essential decisions, user directives, and architectural constraints never drift across session boundaries or model switches.
+
+### Who It's For
+- **Agent Developers & Power Users**: Anyone running long-horizon autonomous tasks in OpenClaw who needs deterministic context without losing early instructions or architectural decisions.
+- **Multi-Model Workflows**: Teams switching dynamically between LLMs (e.g. Gemini, Claude, GPT) where token budgets and context behavior differ, requiring zero-shift continuity.
+- **Enterprise & Open-Source Maintainers**: Developers who require local, observable (Prometheus-compatible), crash-safe memory without external vector database server dependencies.
+
+### What It's Built With
+- **Language**: TypeScript 5 (Node.js >= 20)
+- **Local Persistence**: Pure-JS SQLite (`sql.js`) with zero native C++ binding dependencies, plus in-memory `lru-cache`
+- **Search & Ranking**: Lexical BM25 index with Porter stemming and multi-factor heuristic scoring
+- **Token Accuracy**: Byte-pair encoding tokenization powered by `gpt-tokenizer`
+- **Validation & Reliability**: Zod v4 schemas, circuit-breaker fault tolerance, and Prometheus metrics registry
+- **Testing & Automation**: Cross-platform Jest test suite and GitHub Actions CI matrix
+
+---
+
+## Quick Start & How to Run It
+
+### Prerequisites
+- Node.js `>= 20.0.0`
+- npm `>= 10.0.0`
+
+### Installation & Build
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/chatengineer/memory-context.git
+cd memory-context
+
+# 2. Install dependencies
+npm ci
+
+# 3. Verify plugin metadata and compile TypeScript
+npm run verify:metadata
+npm run build
+```
+
+### Running Tests
+
+```bash
+# Run all unit and integration tests (cross-platform on Windows, macOS, Linux)
+npm test
+
+# Run tests with complete coverage reporting
+npm run test:coverage
+```
+
+### Enabling in OpenClaw
+
+Add `memory-context` to your OpenClaw configuration file (`openclaw.json` or plugin config):
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "memory-context"
+    },
+    "entries": {
+      "memory-context": {
+        "enabled": true,
+        "config": {
+          "mode": "jit",
+          "hierarchyLevels": 5,
+          "targetUtilization": 0.95,
+          "enableShiftImmunity": true,
+          "enableQuantumAnchors": true
+        }
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## Architecture
@@ -503,6 +578,8 @@ npm run ci
 
 ## Changelog
 
+See the complete release history in [CHANGELOG.md](CHANGELOG.md).
+
 ### v1.5.0 (2026-03-14)
 - Added GitHub Actions workflows for CI, release packaging, and dependency review
 - Fixed Jest coverage reporter output (`lcov` instead of broken `lcv`)
@@ -539,6 +616,12 @@ npm run ci
 
 ---
 
+## Roadmap
+
+Planned work (docs, manifest/implementation parity, durable cold tier, type safety, performance, packaging) is tracked in [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## License
 
 MIT License - See LICENSE file for details.
@@ -547,7 +630,7 @@ MIT License - See LICENSE file for details.
 
 ## Summary
 
-**Memory Context v1.4.0** is the definitive solution for:
+**Memory Context v1.5.0** is the definitive solution for:
 - Agents requiring perfect context continuity
 - Systems where compaction is unacceptable
 - Applications needing guaranteed recovery
@@ -563,4 +646,4 @@ MIT License - See LICENSE file for details.
 - #8: Observability/Metrics
 - #10: Input Validation
 
-**Repository:** `github.com/chatengineer/memory-context` (private)
+**Repository:** [github.com/chatengineer/memory-context](https://github.com/chatengineer/memory-context) (Public)
