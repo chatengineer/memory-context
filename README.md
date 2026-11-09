@@ -81,6 +81,9 @@ npm test
 
 # Run tests with complete coverage reporting
 npm run test:coverage
+
+# Run the LoCoMo-style retrieval regression guard
+npm run benchmark:locomo
 ```
 
 ### Enabling in OpenClaw
@@ -117,7 +120,7 @@ Add `memory-context` to your OpenClaw configuration file (`openclaw.json` or plu
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MEMORY CONTEXT v1.5.0                     │
+│                    MEMORY CONTEXT v1.6.0                     │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   JIT Engine │  │   Quantum    │  │   Budget     │       │
@@ -160,6 +163,8 @@ The heart of the system. Rebuilds context from complete source on every call.
 **Key Features:**
 - Gathers all hierarchical layers (L0-L4)
 - Retrieves full conversation history
+- Normalizes queries and diversifies ranked memories before budgeting
+- Annotates retrieved memories with provenance evidence
 - Computes relevance scores
 - Applies token budget
 - Injects quantum anchors
@@ -257,6 +262,18 @@ Multi-factor relevance scoring.
 - **Priority (20%)**: Boost for priority keywords
 - **Density (10%)**: Semantic information density
 - **Overlap (10%)**: Context window overlap
+
+### 7b. Retrieval Quality Pipeline (`src/search/query-normalizer.ts`) - NEW in v1.6.0
+
+Long-horizon retrieval is normalized and diversified before it reaches the token budget.
+
+**Features:**
+- **Query normalization**: NFKC folding, camelCase splitting, apostrophe/punctuation cleanup, month and participant alias expansion, ISO and year-month date expansion, and entity expansion from retrieved sources.
+- **Adaptive recency**: derives the recency half-life and horizon from the corpus time span so evidence older than the fixed 7-day cutoff is not zeroed out in long conversations.
+- **MMR diversity**: re-ranks the top candidate window (64 items) with maximal-marginal-relevance to avoid returning near-duplicate memories while keeping the rest in score order.
+- **Provenance evidence**: prefixes each selected memory with `[memory-evidence source=… id=… timestamp=…]` so the agent can cite where a memory came from.
+
+The `npm run benchmark:locomo` regression guard checks hit@5 and MRR for date, alias, and named-entity questions.
 
 ### 8. Observability (`src/observability/metrics.ts`) - NEW in v1.4.0
 
@@ -465,6 +482,7 @@ export { FullHistory } from './src/persistence/full-history';
 
 // Search
 export { BM25Index } from './src/search/bm25-index';
+export { QueryNormalizer } from './src/search/query-normalizer';
 
 // Heuristics
 export { AdvancedRelevanceScorer, computeRelevanceScore } from './src/heuristics/advanced-relevance';
@@ -579,6 +597,15 @@ npm run ci
 ## Changelog
 
 See the complete release history in [CHANGELOG.md](CHANGELOG.md).
+
+### v1.6.0 (2026-11-05)
+- Added query normalization with month, participant, date, and named-entity expansion
+- Added adaptive recency horizons for long-range evidence
+- Added MMR diversity over the top retrieval window
+- Added provenance evidence headers to assembled context
+- Added a LoCoMo-style retrieval regression benchmark and CI step
+- Migrated plugin tools to the `contracts.tools` manifest schema and added the `openclaw.extensions` package entry
+- Fixed a timestamp formatting crash on non-finite metadata and bounded MMR to avoid quadratic work on large histories
 
 ### v1.5.0 (2026-03-14)
 - Added GitHub Actions workflows for CI, release packaging, and dependency review
