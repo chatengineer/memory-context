@@ -101,6 +101,11 @@ The goal is a README and repo where a newcomer can install and run the plugin in
 The goal is that everything `openclaw.plugin.json` advertises actually exists, works, and is tested
 against a realistic host.
 
+Delivered in `v1.6.0`: capability declarations now live under `contracts.tools` (current OpenClaw
+ignores top-level `tools`), and `package.json` declares `openclaw.extensions` so the compiled entry
+loads. The broader tool/gateway audit below remains open.
+
+- [x] **Move capability declarations under `contracts.*`** and declare `openclaw.extensions` so the compiled plugin loads. _(delivered in v1.6.0)_
 - [ ] **Audit the manifest** ([#88](https://github.com/chatengineer/memory-context/issues/88)): for each of the 15 tools, 10 gateway methods and 4 services, decide
       whether to implement or remove it. Record the decisions in `docs/api.md`. _(1 h)_
 - [ ] **Implement core tools** ([#89](https://github.com/chatengineer/memory-context/issues/89)) backed by existing engine methods: `memory_context_stats`,
@@ -206,6 +211,7 @@ The goal is that users control what's kept, for how long, and can export or dele
 
 The goal is better recall and precision while staying fully lexical (no embeddings).
 
+- [x] **Add query normalization and expansion** (month and participant aliases, ISO and year-month dates, named entities) with a LoCoMo-style regression guard. _(delivered in v1.6.0)_
 - [ ] **Replace the simplified stemmer** ([#130](https://github.com/chatengineer/memory-context/issues/130)) with a full Porter2 (Snowball English) implementation
       and test it against the reference word list. _(3 h)_
 - [ ] **Use Unicode-aware tokenization** ([#131](https://github.com/chatengineer/memory-context/issues/131)) via `Intl.Segmenter`, including CJK segmentation and
